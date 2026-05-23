@@ -1,0 +1,6 @@
+launchs/
+*.log
+temp/
+tmp/
+**/__pycache__
+sample/generated/
