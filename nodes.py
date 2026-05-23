@@ -19,6 +19,11 @@ import torch
 import torchaudio
 
 try:
+    from tqdm.auto import tqdm as _tqdm
+except ImportError:
+    _tqdm = None
+
+try:
     import folder_paths
 except ImportError:
     folder_paths = None
@@ -36,7 +41,7 @@ except ImportError:
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 SONGGEN_DIR = PLUGIN_DIR / "songgeneration"
-CATEGORY = "eastmoe/Comfy-Easy-SongGeneration"
+DEFAULT_LOCALE = "zh-cn"
 SONGGEN_MODEL_TYPE = "SONGGEN_MODEL"
 AUTO_PROMPT_TYPES = [
     "None",
@@ -67,6 +72,54 @@ _MODEL_CACHE: dict[tuple[Any, ...], "SongGenerationModelHandle"] = {}
 _DTYPE_CHOICES = ["float16", "bfloat16", "float32"]
 _QUANTIZATION_CHOICES = ["none", "fp4", "fp8", "int4", "int8"]
 _QUANTIZATION_TARGETS = ["LLM", "LLM+Diffusion", "LLM+Diffusion+VAE"]
+
+
+def _load_localization(locale: str) -> dict[str, Any]:
+    locale_name = (locale or DEFAULT_LOCALE).strip().lower()
+    path = PLUGIN_DIR / "local" / locale_name / "nodes.json"
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        print(f"[Easy-SongGeneration] Failed to load localization file {path}: {exc}", flush=True)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+_LOCALIZATION = _load_localization(os.environ.get("COMFYUI_EASY_SONGGENERATION_LOCALE", DEFAULT_LOCALE))
+
+
+def _tr(path: str, default: Any) -> Any:
+    value: Any = _LOCALIZATION
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return default
+        value = value[part]
+    return value
+
+
+def _tr_text(path: str, default: str) -> str:
+    value = _tr(path, default)
+    return value if isinstance(value, str) else default
+
+
+def _tr_mapping(path: str, default: dict[str, str]) -> dict[str, str]:
+    value = _tr(path, default)
+    if isinstance(value, dict) and all(isinstance(key, str) and isinstance(val, str) for key, val in value.items()):
+        return value
+    return default
+
+
+def _tr_names(path: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    value = _tr(path, list(default))
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return tuple(value)
+    return default
+
+
+CATEGORY = _tr_text("category", "eastmoe/Comfy-Easy-SongGeneration")
 
 
 def _ui(display_name: str, tooltip: str, **extra: Any) -> dict[str, Any]:
@@ -178,25 +231,112 @@ def _check_interrupted() -> None:
 
 
 class _SongGenProgress:
-    def __init__(self, total: int, label: str) -> None:
+    def __init__(self, total: int, label: str, *, use_tqdm: bool = True) -> None:
         self.total = max(1, int(total))
         self.current = 0
         self.label = label
         self.started = time.monotonic()
         self.last_log = self.started
         self.pbar = ComfyProgressBar(self.total) if ComfyProgressBar is not None else None
-        print(f"[Easy-SongGeneration] {label}...", flush=True)
+        self.tqdm = (
+            _tqdm(
+                total=self.total,
+                desc=f"[Easy-SongGeneration] {label}",
+                unit="step",
+                dynamic_ncols=True,
+                leave=True,
+            )
+            if use_tqdm and _tqdm is not None
+            else None
+        )
+        if self.tqdm is None:
+            print(f"[Easy-SongGeneration] {label}...", flush=True)
+        self._send()
 
-    def update(self, amount: int = 1, label: str | None = None) -> None:
-        if label:
-            self.label = label
-        self.current = max(0, min(self.total, self.current + int(amount)))
+    def _send(self) -> None:
         if self.pbar is not None:
             self.pbar.update_absolute(self.current, self.total)
+
+    def update(self, amount: int = 1, label: str | None = None) -> None:
+        self.update_absolute(self.current + int(amount), total=self.total, label=label)
+
+    def update_absolute(self, value: int, *, total: int | None = None, label: str | None = None) -> None:
+        _check_interrupted()
+        if total is not None:
+            self.total = max(1, int(total))
+        if label:
+            self.label = label
+            if self.tqdm is not None:
+                self.tqdm.set_description_str(f"[Easy-SongGeneration] {self.label}")
+        previous = self.current
+        self.current = max(0, min(self.total, int(value)))
+        self._send()
+        if self.tqdm is not None:
+            self.tqdm.total = self.total
+            delta = self.current - previous
+            if delta > 0:
+                self.tqdm.update(delta)
+            else:
+                self.tqdm.n = self.current
+                self.tqdm.refresh()
         now = time.monotonic()
-        if now - self.last_log >= 5.0 or self.current >= self.total:
+        if self.tqdm is None and (now - self.last_log >= 5.0 or self.current >= self.total):
             self.last_log = now
             print(f"[Easy-SongGeneration] {self.label}: {self.current}/{self.total}", flush=True)
+
+    def finish(self, label: str | None = None) -> None:
+        if label:
+            self.label = label
+            if self.tqdm is not None:
+                self.tqdm.set_description_str(f"[Easy-SongGeneration] {self.label}")
+        self.current = self.total
+        self._send()
+        if self.tqdm is not None:
+            self.tqdm.n = self.total
+            self.tqdm.refresh()
+            self.tqdm.close()
+            self.tqdm = None
+        else:
+            print(f"[Easy-SongGeneration] {self.label}: {self.current}/{self.total}", flush=True)
+
+    def close(self) -> None:
+        if self.tqdm is not None:
+            self.tqdm.close()
+            self.tqdm = None
+
+
+class _ProgressBridge:
+    def __init__(self) -> None:
+        self.label: str | None = None
+        self.progress: _SongGenProgress | None = None
+
+    def update(self, current: int, total: int, label: str | None = None) -> None:
+        label = label or "生成进度"
+        current = int(current)
+        total = max(1, int(total))
+        if self.progress is None or self.label != label or current < self.progress.current:
+            self.close(finish=True)
+            self.label = label
+            self.progress = _SongGenProgress(total, label, use_tqdm=False)
+        self.progress.update_absolute(current, total=total, label=label)
+
+    def close(self, *, finish: bool = False) -> None:
+        if self.progress is not None:
+            if finish:
+                self.progress.finish()
+            else:
+                self.progress.close()
+            self.progress = None
+            self.label = None
+
+
+def _get_comfy_progress_module():
+    text = str(SONGGEN_DIR)
+    if text not in sys.path:
+        sys.path.insert(0, text)
+    import comfy_progress
+
+    return comfy_progress
 
 
 def _split_tensor_name(name: str) -> tuple[str, str]:
@@ -470,21 +610,29 @@ def _replace_linear_modules(
     *,
     module_names: list[str] | None = None,
     prefix: str = "",
+    progress: _SongGenProgress | None = None,
 ) -> int:
     mode = _normalize_quantization_mode(quantization)
     if mode is None:
         return 0
     count = 0
     for name, child in list(module.named_children()):
+        _check_interrupted()
         full_name = f"{prefix}.{name}" if prefix else name
         if isinstance(child, torch.nn.Linear):
             setattr(module, name, QuantizedLinear.from_linear(child, mode))
             if module_names is not None:
                 module_names.append(full_name)
             count += 1
+            if progress is not None:
+                progress.update(1, label=f"量化 Linear: {full_name}")
         else:
-            count += _replace_linear_modules(child, mode, module_names=module_names, prefix=full_name)
+            count += _replace_linear_modules(child, mode, module_names=module_names, prefix=full_name, progress=progress)
     return count
+
+
+def _count_linear_modules(module: torch.nn.Module) -> int:
+    return sum(1 for child in module.modules() if isinstance(child, torch.nn.Linear))
 
 
 def _replace_quantized_modules_from_names(
@@ -493,8 +641,10 @@ def _replace_quantized_modules_from_names(
     *,
     mode: str,
     state_dict: dict[str, torch.Tensor],
+    progress: _SongGenProgress | None = None,
 ) -> None:
     for module_name in module_names:
+        _check_interrupted()
         module = model.get_submodule(module_name)
         if not isinstance(module, torch.nn.Linear):
             raise RuntimeError(f"Quantization cache expected Linear module {module_name!r}, got {type(module).__name__}.")
@@ -503,6 +653,8 @@ def _replace_quantized_modules_from_names(
             module_name,
             QuantizedLinear.empty_from_linear(module, mode, has_bias=f"{module_name}.bias" in state_dict),
         )
+        if progress is not None:
+            progress.update(1, label=f"恢复量化 Linear: {module_name}")
 
 
 def _float8_dtype_name(dtype: torch.dtype) -> str | None:
@@ -560,14 +712,26 @@ def _apply_quantization_cache(
         if payload.get("metadata") == metadata:
             state_dict = _unpack_quantized_cache_state_dict(payload)
             module_names = list(payload.get("quantized_module_names", []))
-            _replace_quantized_modules_from_names(module, module_names, mode=mode, state_dict=state_dict)
+            progress = _SongGenProgress(max(1, len(module_names)), f"加载量化缓存 {scope} ({mode})")
+            try:
+                _replace_quantized_modules_from_names(module, module_names, mode=mode, state_dict=state_dict, progress=progress)
+                progress.finish()
+            except Exception:
+                progress.close()
+                raise
             _load_state_dict_assign(module, state_dict, strict=False)
             print(f"[Easy-SongGeneration] Loaded quantization cache: {cache_path}", flush=True)
             return len(module_names), f"loaded {cache_path.name}"
         print(f"[Easy-SongGeneration] Ignoring stale quantization cache: {cache_path}", flush=True)
 
     module_names: list[str] = []
-    count = _replace_linear_modules(module, mode, module_names=module_names)
+    progress = _SongGenProgress(max(1, _count_linear_modules(module)), f"构建量化缓存 {scope} ({mode})")
+    try:
+        count = _replace_linear_modules(module, mode, module_names=module_names, progress=progress)
+        progress.finish()
+    except Exception:
+        progress.close()
+        raise
     if count:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         state_dict, packed_float8_dtypes = _pack_quantized_cache_state_dict(module.state_dict())
@@ -883,7 +1047,15 @@ class SongGenerationModelHandle:
                     if payload.get("metadata") == metadata:
                         state_dict = _unpack_quantized_cache_state_dict(payload)
                         module_names = list(payload.get("quantized_module_names", []))
-                        _replace_quantized_modules_from_names(audiolm, module_names, mode=mode, state_dict=state_dict)
+                        progress = _SongGenProgress(max(1, len(module_names)), f"加载 LLM 量化缓存 ({mode})")
+                        try:
+                            _replace_quantized_modules_from_names(
+                                audiolm, module_names, mode=mode, state_dict=state_dict, progress=progress
+                            )
+                            progress.finish()
+                        except Exception:
+                            progress.close()
+                            raise
                         _load_state_dict_assign(audiolm, state_dict, strict=False)
                         self.quantization_info["llm"] = {"count": len(module_names), "status": f"loaded {cache_path.name}"}
                         return audiolm
@@ -913,58 +1085,71 @@ class SongGenerationModelHandle:
         return audiolm
 
     def _load(self) -> None:
-        _add_songgeneration_paths(self.runtime_roots)
+        progress = _SongGenProgress(7, "加载 SongGeneration 模型")
+        try:
+            _add_songgeneration_paths(self.runtime_roots)
+            progress.update(1, label="准备运行时路径")
 
-        import generate as sg_generate
-        from codeclm.models import CodecLM, builders
+            import generate as sg_generate
+            from codeclm.models import CodecLM, builders
 
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is not available. SongGeneration inference requires a CUDA GPU.")
-        if self.gpu_id is not None and self.gpu_id >= 0:
-            torch.cuda.set_device(int(self.gpu_id))
+            if not torch.cuda.is_available():
+                raise RuntimeError("CUDA is not available. SongGeneration inference requires a CUDA GPU.")
+            if self.gpu_id is not None and self.gpu_id >= 0:
+                torch.cuda.set_device(int(self.gpu_id))
+            progress.update(1, label="初始化 CUDA")
 
-        OmegaConf = _register_resolvers(self.model_dir)
-        cfg_path = self.model_dir / "config.yaml"
-        ckpt_path = self.model_dir / "model.pt"
-        if not cfg_path.is_file() or not ckpt_path.is_file():
-            raise FileNotFoundError(f"Expected config.yaml and model.pt under {self.model_dir}")
+            OmegaConf = _register_resolvers(self.model_dir)
+            cfg_path = self.model_dir / "config.yaml"
+            ckpt_path = self.model_dir / "model.pt"
+            if not cfg_path.is_file() or not ckpt_path.is_file():
+                raise FileNotFoundError(f"Expected config.yaml and model.pt under {self.model_dir}")
 
-        cfg = OmegaConf.load(cfg_path)
-        cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
-        cfg.mode = "inference"
-        cfg.lm.use_flash_attn_2 = bool(self.use_flash_attn)
-        cfg.audio_tokenizer_checkpoint = _resolve_existing_path(str(cfg.audio_tokenizer_checkpoint), self.runtime_roots)
-        if "audio_tokenizer_checkpoint_sep" in cfg.keys():
-            cfg.audio_tokenizer_checkpoint_sep = _resolve_existing_path(
-                str(cfg.audio_tokenizer_checkpoint_sep), self.runtime_roots
+            cfg = OmegaConf.load(cfg_path)
+            cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+            cfg.mode = "inference"
+            cfg.lm.use_flash_attn_2 = bool(self.use_flash_attn)
+            cfg.audio_tokenizer_checkpoint = _resolve_existing_path(str(cfg.audio_tokenizer_checkpoint), self.runtime_roots)
+            if "audio_tokenizer_checkpoint_sep" in cfg.keys():
+                cfg.audio_tokenizer_checkpoint_sep = _resolve_existing_path(
+                    str(cfg.audio_tokenizer_checkpoint_sep), self.runtime_roots
+                )
+            self.cfg = cfg
+            self.sample_rate = int(getattr(cfg, "sample_rate", 48000))
+            progress.update(1, label="读取模型配置")
+
+            auto_prompt_path = _resolve_runtime_file("tools/new_auto_prompt.pt", self.runtime_roots)
+            self.auto_prompt = _torch_load_weights(Path(auto_prompt_path), map_location="cpu")
+            progress.update(1, label="加载自动参考音频提示")
+
+            seperate_tokenizer = None
+            if "audio_tokenizer_checkpoint_sep" in cfg.keys():
+                tokenizer_builder = getattr(builders, "get_audio_tokenizer_model_cpu", builders.get_audio_tokenizer_model)
+                seperate_tokenizer = tokenizer_builder(cfg.audio_tokenizer_checkpoint_sep, cfg)
+                seperate_tokenizer = self._configure_tango_tokenizer(seperate_tokenizer, scope_prefix="separate-tokenizer")
+            progress.update(1, label="加载音频分词器")
+
+            audiolm = self._load_lm(builders, cfg, ckpt_path)
+            audiolm = audiolm.eval()
+            progress.update(1, label="加载 LLM")
+            if self.segmented_load:
+                audiolm = _move_module_segmented(audiolm, self._device(), self.llm_dtype, f"移动 LLM 到 {self._device()}")
+            else:
+                _check_interrupted()
+                audiolm = audiolm.to(device=self._device(), dtype=self.llm_dtype)
+
+            self.model = CodecLM(
+                name="ComfyUI-SongGeneration",
+                lm=audiolm,
+                audiotokenizer=None,
+                max_duration=cfg.max_dur,
+                seperate_tokenizer=seperate_tokenizer,
             )
-        self.cfg = cfg
-        self.sample_rate = int(getattr(cfg, "sample_rate", 48000))
-
-        auto_prompt_path = _resolve_runtime_file("tools/new_auto_prompt.pt", self.runtime_roots)
-        self.auto_prompt = _torch_load_weights(Path(auto_prompt_path), map_location="cpu")
-
-        seperate_tokenizer = None
-        if "audio_tokenizer_checkpoint_sep" in cfg.keys():
-            tokenizer_builder = getattr(builders, "get_audio_tokenizer_model_cpu", builders.get_audio_tokenizer_model)
-            seperate_tokenizer = tokenizer_builder(cfg.audio_tokenizer_checkpoint_sep, cfg)
-            seperate_tokenizer = self._configure_tango_tokenizer(seperate_tokenizer, scope_prefix="separate-tokenizer")
-
-        audiolm = self._load_lm(builders, cfg, ckpt_path)
-        audiolm = audiolm.eval()
-        if self.segmented_load:
-            audiolm = _move_module_segmented(audiolm, self._device(), self.llm_dtype, f"移动 LLM 到 {self._device()}")
-        else:
-            audiolm = audiolm.to(device=self._device(), dtype=self.llm_dtype)
-
-        self.model = CodecLM(
-            name="ComfyUI-SongGeneration",
-            lm=audiolm,
-            audiotokenizer=None,
-            max_duration=cfg.max_dur,
-            seperate_tokenizer=seperate_tokenizer,
-        )
-        self._modules = {"sg_generate": sg_generate, "builders": builders}
+            self._modules = {"sg_generate": sg_generate, "builders": builders}
+            progress.finish("SongGeneration 模型加载完成")
+        except Exception:
+            progress.close()
+            raise
 
     def release(self, *, clear_cuda_cache: bool = True) -> str:
         _MODEL_CACHE.pop(self.cache_key, None)
@@ -1071,8 +1256,7 @@ class SongGenerationModelHandle:
         if self.model is None:
             raise RuntimeError("SongGeneration model has been released. Run the loader node again.")
         with _RUNTIME_LOCK:
-            if model_management is not None and hasattr(model_management, "throw_exception_if_processing_interrupted"):
-                model_management.throw_exception_if_processing_interrupted()
+            _check_interrupted()
             seed = int(options.seed) if int(options.seed) >= 0 else int(time.time())
             np.random.seed(seed)
             torch.manual_seed(seed)
@@ -1103,39 +1287,63 @@ class SongGenerationModelHandle:
                 "melody_is_wav": conditioning["melody_is_wav"],
             }
             start_time = time.time()
-            with torch.autocast(
-                device_type="cuda",
-                dtype=self.llm_dtype,
-                enabled=self.llm_dtype in (torch.float16, torch.bfloat16),
-            ):
-                with torch.no_grad():
-                    tokens = self.model.generate(**generate_inp, return_tokens=True)
+            lm_progress = _ProgressBridge()
+            decode_progress = _ProgressBridge()
+
+            def _lm_progress(current: int, total: int) -> None:
+                lm_progress.update(current, total, "LLM token 生成")
+
+            def _decode_progress(current: int, total: int, label: str | None = None) -> None:
+                decode_progress.update(current, total, label or "Diffusion 音频解码")
+
+            progress_module = _get_comfy_progress_module()
+            self.model.set_custom_progress_callback(_lm_progress)
+            lm_success = False
+            try:
+                with progress_module.progress_hooks(progress_callback=_decode_progress, interrupt_callback=_check_interrupted):
+                    with torch.autocast(
+                        device_type="cuda",
+                        dtype=self.llm_dtype,
+                        enabled=self.llm_dtype in (torch.float16, torch.bfloat16),
+                    ):
+                        with torch.no_grad():
+                            tokens = self.model.generate(**generate_inp, return_tokens=True)
+                lm_success = True
+            finally:
+                self.model.set_custom_progress_callback(None)
+                lm_progress.close(finish=lm_success)
             mid_time = time.time()
 
-            with torch.no_grad():
-                raw_args = ()
-                if "raw_pmt_wav" in conditioning and options.generate_type == "mixed":
-                    raw_args = (
-                        conditioning["raw_pmt_wav"],
-                        conditioning["raw_vocal_wav"],
-                        conditioning["raw_bgm_wav"],
-                    )
-                if options.generate_type == "separate":
-                    mixed = self.model.generate_audio(
-                        tokens, *raw_args, chunked=True, chunk_size=args.chunk_size, gen_type="mixed"
-                    )
-                    vocal = self.model.generate_audio(
-                        tokens, *raw_args, chunked=True, chunk_size=args.chunk_size, gen_type="vocal"
-                    )
-                    bgm = self.model.generate_audio(
-                        tokens, *raw_args, chunked=True, chunk_size=args.chunk_size, gen_type="bgm"
-                    )
-                else:
-                    mixed = self.model.generate_audio(
-                        tokens, *raw_args, chunked=True, chunk_size=args.chunk_size, gen_type=options.generate_type
-                    )
-                    vocal = None
-                    bgm = None
+            decode_success = False
+            try:
+                with progress_module.progress_hooks(progress_callback=_decode_progress, interrupt_callback=_check_interrupted):
+                    with torch.no_grad():
+                        raw_args = ()
+                        if "raw_pmt_wav" in conditioning and options.generate_type == "mixed":
+                            raw_args = (
+                                conditioning["raw_pmt_wav"],
+                                conditioning["raw_vocal_wav"],
+                                conditioning["raw_bgm_wav"],
+                            )
+                        if options.generate_type == "separate":
+                            mixed = self.model.generate_audio(
+                                tokens, *raw_args, chunked=True, chunk_size=args.chunk_size, gen_type="mixed"
+                            )
+                            vocal = self.model.generate_audio(
+                                tokens, *raw_args, chunked=True, chunk_size=args.chunk_size, gen_type="vocal"
+                            )
+                            bgm = self.model.generate_audio(
+                                tokens, *raw_args, chunked=True, chunk_size=args.chunk_size, gen_type="bgm"
+                            )
+                        else:
+                            mixed = self.model.generate_audio(
+                                tokens, *raw_args, chunked=True, chunk_size=args.chunk_size, gen_type=options.generate_type
+                            )
+                            vocal = None
+                            bgm = None
+                decode_success = True
+            finally:
+                decode_progress.close(finish=decode_success)
             end_time = time.time()
 
             metadata = {
@@ -1260,9 +1468,12 @@ def _options_from_kwargs(generate_type: str, auto_prompt_audio_type: str, prompt
 class SongGenerationLoadModel:
     CATEGORY = CATEGORY
     RETURN_TYPES = (SONGGEN_MODEL_TYPE, "STRING")
-    RETURN_NAMES = ("songgen_model", "info")
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationLoadModel", ("songgen_model", "info"))
     FUNCTION = "load"
-    DESCRIPTION = "Load a SongGeneration checkpoint from ComfyUI/models/SongGeneration."
+    DESCRIPTION = _tr_text(
+        "descriptions.EasySongGenerationLoadModel",
+        "Load a SongGeneration checkpoint from ComfyUI/models/SongGeneration.",
+    )
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1347,9 +1558,12 @@ class SongGenerationLoadModel:
 class SongGenerationReleaseModel:
     CATEGORY = CATEGORY
     RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("status",)
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationReleaseModel", ("status",))
     FUNCTION = "release"
-    DESCRIPTION = "Release a loaded SongGeneration model and clear CUDA cache."
+    DESCRIPTION = _tr_text(
+        "descriptions.EasySongGenerationReleaseModel",
+        "Release a loaded SongGeneration model and clear CUDA cache.",
+    )
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1397,25 +1611,34 @@ class _GenerateOneBase:
 
 class SongGenerationGenerateMixed(_GenerateOneBase):
     GENERATE_TYPE = "mixed"
-    DESCRIPTION = "Generate a full mixed song with vocals and accompaniment."
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationGenerateMixed", ("audio", "metadata"))
+    DESCRIPTION = _tr_text(
+        "descriptions.EasySongGenerationGenerateMixed",
+        "Generate a full mixed song with vocals and accompaniment.",
+    )
 
 
 class SongGenerationGenerateVocal(_GenerateOneBase):
     GENERATE_TYPE = "vocal"
-    DESCRIPTION = "Generate vocal-only audio."
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationGenerateVocal", ("audio", "metadata"))
+    DESCRIPTION = _tr_text("descriptions.EasySongGenerationGenerateVocal", "Generate vocal-only audio.")
 
 
 class SongGenerationGenerateBGM(_GenerateOneBase):
     GENERATE_TYPE = "bgm"
-    DESCRIPTION = "Generate accompaniment / pure music audio."
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationGenerateBGM", ("audio", "metadata"))
+    DESCRIPTION = _tr_text("descriptions.EasySongGenerationGenerateBGM", "Generate accompaniment / pure music audio.")
 
 
 class SongGenerationGenerateSeparate:
     CATEGORY = CATEGORY
     RETURN_TYPES = ("AUDIO", "AUDIO", "AUDIO", "STRING")
-    RETURN_NAMES = ("mixed", "vocal", "bgm", "metadata")
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationGenerateSeparate", ("mixed", "vocal", "bgm", "metadata"))
     FUNCTION = "generate"
-    DESCRIPTION = "Generate mixed, vocal-only, and accompaniment tracks."
+    DESCRIPTION = _tr_text(
+        "descriptions.EasySongGenerationGenerateSeparate",
+        "Generate mixed, vocal-only, and accompaniment tracks.",
+    )
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1454,11 +1677,11 @@ NODE_CLASS_MAPPINGS = {
     "EasySongGenerationGenerateSeparate": SongGenerationGenerateSeparate,
 }
 
-NODE_DISPLAY_NAME_MAPPINGS = {
+NODE_DISPLAY_NAME_MAPPINGS = _tr_mapping("node_display_names", {
     "EasySongGenerationLoadModel": "Easy SongGeneration - Load Model",
     "EasySongGenerationReleaseModel": "Easy SongGeneration - Release Model",
     "EasySongGenerationGenerateMixed": "Easy SongGeneration - Generate Mixed",
     "EasySongGenerationGenerateVocal": "Easy SongGeneration - Generate Vocal",
     "EasySongGenerationGenerateBGM": "Easy SongGeneration - Generate BGM",
     "EasySongGenerationGenerateSeparate": "Easy SongGeneration - Generate Separate",
-}
+})

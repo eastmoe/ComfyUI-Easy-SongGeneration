@@ -1,0 +1,163 @@
+{
+  "category": "eastmoe/Comfy-Easy-SongGeneration",
+  "node_display_names": {
+    "EasySongGenerationLoadModel": "Easy SongGeneration - 加载模型",
+    "EasySongGenerationReleaseModel": "Easy SongGeneration - 释放模型",
+    "EasySongGenerationGenerateMixed": "Easy SongGeneration - 生成完整歌曲",
+    "EasySongGenerationGenerateVocal": "Easy SongGeneration - 生成人声",
+    "EasySongGenerationGenerateBGM": "Easy SongGeneration - 生成伴奏",
+    "EasySongGenerationGenerateSeparate": "Easy SongGeneration - 分轨生成"
+  },
+  "descriptions": {
+    "EasySongGenerationLoadModel": "从 ComfyUI/models/SongGeneration 加载 SongGeneration 检查点，支持分段加载、精度选择和 Linear 权重量化缓存。",
+    "EasySongGenerationReleaseModel": "释放已加载的 SongGeneration 模型并可清理 CUDA 显存缓存。",
+    "EasySongGenerationGenerateMixed": "生成包含人声和伴奏的完整混音歌曲，输出 ComfyUI AUDIO。",
+    "EasySongGenerationGenerateVocal": "生成人声轨，输出 ComfyUI AUDIO。",
+    "EasySongGenerationGenerateBGM": "生成伴奏或纯音乐，输出 ComfyUI AUDIO。",
+    "EasySongGenerationGenerateSeparate": "一次生成混音、人声和伴奏三路音频，输出 ComfyUI AUDIO。"
+  },
+  "return_names": {
+    "EasySongGenerationLoadModel": ["songgen_model", "信息"],
+    "EasySongGenerationReleaseModel": ["状态"],
+    "EasySongGenerationGenerateMixed": ["音频", "元数据"],
+    "EasySongGenerationGenerateVocal": ["音频", "元数据"],
+    "EasySongGenerationGenerateBGM": ["音频", "元数据"],
+    "EasySongGenerationGenerateSeparate": ["混音", "人声", "伴奏", "元数据"]
+  },
+  "ui": {
+    "common": {
+      "songgen_model": {
+        "display_name": "模型",
+        "tooltip": "SongGeneration 模型加载节点输出。"
+      },
+      "lyrics": {
+        "display_name": "歌词",
+        "tooltip": "SongGeneration 段落格式歌词，例如 [verse] ... ; [chorus] ...。"
+      },
+      "descriptions": {
+        "display_name": "描述",
+        "tooltip": "风格、情绪、乐器、人声等逗号分隔提示词。"
+      },
+      "seed": {
+        "display_name": "种子",
+        "tooltip": "-1 使用当前时间。"
+      },
+      "duration": {
+        "display_name": "时长",
+        "tooltip": "0 使用模型 config.yaml 的 max_dur。"
+      },
+      "extend_stride": {
+        "display_name": "扩展步长",
+        "tooltip": "长音频生成步长，通常保持 5。"
+      },
+      "temperature": {
+        "display_name": "温度",
+        "tooltip": "0 使用原推理默认值。"
+      },
+      "cfg_coef": {
+        "display_name": "CFG",
+        "tooltip": "Classifier-Free Guidance 系数。"
+      },
+      "top_k": {
+        "display_name": "Top K",
+        "tooltip": "0 使用原推理默认值。"
+      },
+      "top_p": {
+        "display_name": "Top P",
+        "tooltip": "0 关闭 top-p。"
+      },
+      "use_sampling": {
+        "display_name": "采样",
+        "tooltip": "关闭后使用 greedy decoding。"
+      },
+      "record_tokens": {
+        "display_name": "记录 Tokens",
+        "tooltip": "保持与原推理脚本一致。"
+      },
+      "record_window": {
+        "display_name": "Token 窗口",
+        "tooltip": "Token recording window。"
+      },
+      "chunk_size": {
+        "display_name": "解码块大小",
+        "tooltip": "Diffusion decoding chunk size。"
+      },
+      "auto_prompt_audio_type": {
+        "display_name": "自动参考风格",
+        "tooltip": "None 表示不使用自动参考音频。"
+      },
+      "prompt_audio": {
+        "display_name": "参考音频",
+        "tooltip": "可选 ComfyUI AUDIO，会优先于自动参考风格。"
+      },
+      "prompt_audio_batch_index": {
+        "display_name": "音频批次",
+        "tooltip": "当 AUDIO 包含 batch 时选择其中一条。"
+      }
+    },
+    "load_model": {
+      "model": {
+        "display_name": "模型目录",
+        "tooltip": "包含 config.yaml 和 model.pt 的模型子文件夹。"
+      },
+      "version": {
+        "display_name": "版本",
+        "tooltip": "auto 会根据模型目录名推断 v1/v2。"
+      },
+      "runtime_root": {
+        "display_name": "运行时根目录",
+        "tooltip": "auto 会搜索模型目录、ComfyUI/models/SongGeneration 和插件目录。"
+      },
+      "gpu_id": {
+        "display_name": "GPU ID",
+        "tooltip": "-1 使用当前 CUDA 设备。"
+      },
+      "use_flash_attn": {
+        "display_name": "Flash Attention",
+        "tooltip": "环境支持时可开启。"
+      },
+      "segmented_load": {
+        "display_name": "分段加载",
+        "tooltip": "按模块分段加载/移动权重，减少加载时显存峰值。"
+      },
+      "quantization": {
+        "display_name": "量化格式",
+        "tooltip": "Linear 权重量化格式；none 表示不量化。缓存位于 ComfyUI/models/SongGeneration-cache。"
+      },
+      "quantization_target": {
+        "display_name": "量化范围",
+        "tooltip": "选择要量化的模块。VAE 量化可能影响音质或兼容性。"
+      },
+      "rebuild_quantization_cache": {
+        "display_name": "重建量化缓存",
+        "tooltip": "忽略已有量化缓存并重新生成。"
+      },
+      "llm_precision": {
+        "display_name": "LLM 精度",
+        "tooltip": "LLM 推理/权重计算精度。"
+      },
+      "diffusion_precision": {
+        "display_name": "Diffusion 精度",
+        "tooltip": "音频 Diffusion 解码模型计算精度。"
+      },
+      "vae_precision": {
+        "display_name": "VAE 精度",
+        "tooltip": "音频 VAE 编解码计算精度。"
+      },
+      "reload_model": {
+        "display_name": "重新加载",
+        "tooltip": "忽略缓存并重新加载权重。"
+      }
+    },
+    "release_model": {
+      "songgen_model": {
+        "display_name": "模型",
+        "tooltip": "要释放的 SongGeneration 模型。"
+      },
+      "clear_cuda_cache": {
+        "display_name": "清理显存缓存",
+        "tooltip": "释放后调用 torch.cuda.empty_cache。"
+      }
+    }
+  }
+}

@@ -17,6 +17,15 @@ from models_gpt.models.gpt2_rope2_time_new_correct_mask_noncasual_reflow import 
 from models_gpt.models.gpt2_config import GPT2Config
 from our_MERT_BESTRQ.mert_fairseq.models.musicfm.musicfm_model import MusicFMModel, MusicFMConfig
 
+try:
+    from comfy_progress import check_interrupted, report_progress
+except Exception:
+    def check_interrupted():
+        return None
+
+    def report_progress(current, total, label=None):
+        return None
+
 from torch.cuda.amp import autocast
 
 class HubertModelWithFinalProj(HubertModel):
@@ -153,7 +162,12 @@ class BASECFM(torch.nn.Module, ABC):
         x_next = x.clone()
         noise = x.clone()
 
-        for i in tqdm(range(len(dt))):
+        total_steps = max(1, len(dt))
+        for step_index, i in enumerate(
+            tqdm(range(len(dt)), desc="SongGeneration Diffusion", unit="step", dynamic_ncols=True),
+            start=1,
+        ):
+            check_interrupted()
             ti = t[i]
 
             x_next[:, :incontext_length] = (
@@ -185,6 +199,7 @@ class BASECFM(torch.nn.Module, ABC):
                 v = v_uncond + guidance_scale * (v_cond - v_uncond)
 
             x_next = x_next + dt[i] * v
+            report_progress(step_index, total_steps, "Diffusion 音频解码")
 
         return x_next
 

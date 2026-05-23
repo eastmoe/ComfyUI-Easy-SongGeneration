@@ -17,6 +17,15 @@ from models_gpt.models.gpt2_rope2_time_new_correct_mask_noncasual_reflow import 
 from models_gpt.models.gpt2_config import GPT2Config
 from our_MERT_BESTRQ.mert_fairseq.models.musicfm.musicfm_model import MusicFMModel, MusicFMConfig
 
+try:
+    from comfy_progress import check_interrupted, report_progress
+except Exception:
+    def check_interrupted():
+        return None
+
+    def report_progress(current, total, label=None):
+        return None
+
 from torch.cuda.amp import autocast
 
 
@@ -152,7 +161,12 @@ class BASECFM(torch.nn.Module, ABC):
         # Or in future might add like a return_all_steps flag
         sol = []
 
-        for step in tqdm(range(1, len(t_span))):
+        total_steps = max(1, len(t_span) - 1)
+        for step_index, step in enumerate(
+            tqdm(range(1, len(t_span)), desc="SongGeneration Diffusion", unit="step", dynamic_ncols=True),
+            start=1,
+        ):
+            check_interrupted()
             # print("incontext_x.shape:",incontext_x.shape)
             # print("noise.shape:",noise.shape)
             # print("t.shape:",t.shape)
@@ -182,6 +196,7 @@ class BASECFM(torch.nn.Module, ABC):
             x = x + dt * dphi_dt
             t = t + dt
             sol.append(x)
+            report_progress(step_index, total_steps, "Diffusion 音频解码")
             if step < len(t_span) - 1:
                 dt = t_span[step + 1] - t
 

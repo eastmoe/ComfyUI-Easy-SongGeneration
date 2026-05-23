@@ -21,6 +21,13 @@ from codeclm.modules.conditioners import (
 )
 from codeclm.utils.utils import create_norm_fn, init_layer, sample_top_k, sample_top_p, multinomial
 from codeclm.modules.pattern import CodebooksPatternProvider
+
+try:
+    from comfy_progress import check_interrupted
+except Exception:
+    def check_interrupted():
+        return None
+
 ConditionTensors = tp.Dict[str, ConditionType]
 
 @dataclass
@@ -350,7 +357,8 @@ class LmModel(StreamingModule):
                  cfg_coef: tp.Optional[float] = None,
                  check: bool = False,        
                  record_tokens: bool = True,
-                 record_window: int = 150
+                 record_window: int = 150,
+                 callback: tp.Optional[tp.Callable[[int, int], None]] = None,
                  ) -> torch.Tensor:
         """Generate tokens sampling from the model given a prompt or unconditionally. Generation can
         be perform in a greedy fashion or using sampling with top K and top P strategies.
@@ -416,7 +424,17 @@ class LmModel(StreamingModule):
         with self.streaming():
             gen_sequence_len = gen_sequence.shape[-1]  # gen_sequence shape is [B, K, S]
             prev_offset = 0
-            for offset in tqdm(range(start_offset_sequence, gen_sequence_len)):
+            total_steps = max(1, gen_sequence_len - start_offset_sequence)
+            for step_index, offset in enumerate(
+                tqdm(
+                    range(start_offset_sequence, gen_sequence_len),
+                    desc="SongGeneration LLM",
+                    unit="token",
+                    dynamic_ncols=True,
+                ),
+                start=1,
+            ):
+                check_interrupted()
                 # get current sequence (note that the streaming API is providing the caching over previous offsets)
                 curr_sequence = gen_sequence[..., prev_offset:offset]
                 curr_mask = mask[None, ..., prev_offset:offset].expand(B, -1, -1)
@@ -448,6 +466,8 @@ class LmModel(StreamingModule):
                 # record sampled tokens in a window
                 if record_tokens:
                     record_token_pool.append(next_token.squeeze())
+                if callback is not None:
+                    callback(step_index, total_steps)
                 if torch.all(is_end):
                     gen_sequence = gen_sequence[..., :offset+1]
                     break
