@@ -2,7 +2,6 @@ alias-free-torch>=0.0.6
 diffusers==0.27.2
 einops>=0.8.1
 einops-exts==0.0.4
-gradio>=4.0.0
 huggingface-hub==0.25.2
 julius>=0.2.7
 k-diffusion==0.1.1

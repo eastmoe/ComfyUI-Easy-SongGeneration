@@ -269,14 +269,6 @@ A dark jazz song with a male singer.
   If both are present, and they convey conflicting information, the model may struggle to follow instructions accurately, resulting in degraded generation quality.
 - If `prompt_audio_path` is not provided, you can instead use `auto_prompt_audio_type` for automatic reference selection.
 
-## Gradio UI
-
-You can start up the UI with the following command:
-
-```bash
-sh tools/gradio/run.sh ckpt_path
-```
-
 ## Citation
 
 ```
