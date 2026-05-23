@@ -87,14 +87,42 @@ def _runtime_roots(model_dir: Path, runtime_root: str) -> list[Path]:
 def _resolve_existing_path(value: str | None, roots: list[Path]) -> str | None:
     if not value:
         return value
-    path = Path(str(value)).expanduser()
+    path = Path(str(value).strip()).expanduser()
     if path.is_absolute():
         return str(path)
+    candidates = [path]
+    parts = path.parts
+    if parts:
+        first = parts[0]
+        if first in {".", ""} and len(parts) > 1:
+            first = parts[1]
+            rest = parts[2:]
+            prefix = (parts[0],)
+        else:
+            rest = parts[1:]
+            prefix = ()
+        aliases = {"ckpt": "common", "common": "ckpt"}
+        alias = aliases.get(first)
+        if alias:
+            candidates.append(Path(*prefix, alias, *rest))
     for root in roots:
-        candidate = root / path
-        if candidate.exists():
-            return str(candidate)
+        for candidate_path in candidates:
+            candidate = root / candidate_path
+            if candidate.exists():
+                return str(candidate)
     return str(path)
+
+
+def _resolve_prefixed_existing_path(value: str | None, roots: list[Path]) -> str | None:
+    if not value:
+        return value
+    text = str(value).strip()
+    prefixes = ("Flow1dVAE1rvq_", "Flow1dVAESeparate_")
+    for prefix in prefixes:
+        if text.startswith(prefix):
+            resolved = _resolve_existing_path(text[len(prefix):], roots)
+            return f"{prefix}{resolved}" if resolved else value
+    return _resolve_existing_path(text, roots)
 
 
 def _resolve_runtime_file(relative_path: str, roots: list[Path]) -> str:

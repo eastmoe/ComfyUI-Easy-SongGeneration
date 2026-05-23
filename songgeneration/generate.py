@@ -23,6 +23,76 @@ def get_arg(args, name, default=None):
     return getattr(args, name, default)
 
 
+def runtime_roots(ckpt_dir):
+    roots = [
+        ckpt_dir,
+        os.path.dirname(os.path.abspath(ckpt_dir)),
+        SCRIPT_DIR,
+        os.getcwd(),
+    ]
+    deduped = []
+    seen = set()
+    for root in roots:
+        if not root:
+            continue
+        key = os.path.abspath(root)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(root)
+    return deduped
+
+
+def common_ckpt_alias(path):
+    norm = path.replace("\\", "/")
+    leading = "./" if norm.startswith("./") else ""
+    stripped = norm[2:] if leading else norm
+    aliases = {"ckpt": "common", "common": "ckpt"}
+    for source, target in aliases.items():
+        if stripped == source or stripped.startswith(source + "/"):
+            return leading + target + stripped[len(source):]
+    return None
+
+
+def resolve_existing_path(value, roots):
+    if not value:
+        return value
+    text = str(value).strip()
+    if os.path.isabs(text):
+        return text
+    candidates = [text]
+    alias = common_ckpt_alias(text)
+    if alias:
+        candidates.append(alias)
+    for root in roots:
+        for candidate in candidates:
+            path = os.path.join(root, candidate)
+            if os.path.exists(path):
+                return path
+    return text
+
+
+def resolve_prefixed_existing_path(value, roots):
+    if not value:
+        return value
+    text = str(value).strip()
+    prefixes = ("Flow1dVAE1rvq_", "Flow1dVAESeparate_")
+    for prefix in prefixes:
+        if text.startswith(prefix):
+            return prefix + resolve_existing_path(text[len(prefix):], roots)
+    return resolve_existing_path(text, roots)
+
+
+def resolve_config_paths(cfg, roots):
+    cfg.audio_tokenizer_checkpoint = resolve_prefixed_existing_path(cfg.audio_tokenizer_checkpoint, roots)
+    if "audio_tokenizer_checkpoint_sep" in cfg.keys():
+        cfg.audio_tokenizer_checkpoint_sep = resolve_prefixed_existing_path(cfg.audio_tokenizer_checkpoint_sep, roots)
+    if "vae_config" in cfg.keys():
+        cfg.vae_config = resolve_existing_path(cfg.vae_config, roots)
+    if "vae_model" in cfg.keys():
+        cfg.vae_model = resolve_existing_path(cfg.vae_model, roots)
+    return cfg
+
+
 def prepare_inference_env(args, cfg):
     if get_arg(args, "gpu_id") is not None:
         torch.cuda.set_device(int(args.gpu_id))
@@ -225,6 +295,7 @@ def generate(args, version = 'v1'):
     ckpt_path = get_arg(args, "model_path") or os.path.join(ckpt_dir, 'model.pt')
     cfg = OmegaConf.load(cfg_path)
     cfg = prepare_inference_env(args, cfg)
+    cfg = resolve_config_paths(cfg, runtime_roots(ckpt_dir))
     cfg.lm.use_flash_attn_2 = args.use_flash_attn
     print(f"use_flash_attn: {args.use_flash_attn}")
     cfg.mode = 'inference'
@@ -427,6 +498,7 @@ def generate_lowmem(args, version = 'v1'):
     ckpt_path = get_arg(args, "model_path") or os.path.join(ckpt_dir, 'model.pt')
     cfg = OmegaConf.load(cfg_path)
     cfg = prepare_inference_env(args, cfg)
+    cfg = resolve_config_paths(cfg, runtime_roots(ckpt_dir))
     cfg.lm.use_flash_attn_2 = args.use_flash_attn
     print(f"use_flash_attn: {args.use_flash_attn}")
     cfg.mode = 'inference'

@@ -34,6 +34,7 @@ from .runtime import (
     _infer_version,
     _register_resolvers,
     _resolve_existing_path,
+    _resolve_prefixed_existing_path,
     _resolve_model_dir,
     _resolve_runtime_file,
     _runtime_roots,
@@ -232,11 +233,17 @@ class SongGenerationModelHandle:
             cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
             cfg.mode = "inference"
             cfg.lm.use_flash_attn_2 = bool(self.use_flash_attn)
-            cfg.audio_tokenizer_checkpoint = _resolve_existing_path(str(cfg.audio_tokenizer_checkpoint), self.runtime_roots)
+            cfg.audio_tokenizer_checkpoint = _resolve_prefixed_existing_path(
+                str(cfg.audio_tokenizer_checkpoint), self.runtime_roots
+            )
             if "audio_tokenizer_checkpoint_sep" in cfg.keys():
-                cfg.audio_tokenizer_checkpoint_sep = _resolve_existing_path(
+                cfg.audio_tokenizer_checkpoint_sep = _resolve_prefixed_existing_path(
                     str(cfg.audio_tokenizer_checkpoint_sep), self.runtime_roots
                 )
+            if "vae_config" in cfg.keys():
+                cfg.vae_config = _resolve_existing_path(str(cfg.vae_config), self.runtime_roots)
+            if "vae_model" in cfg.keys():
+                cfg.vae_model = _resolve_existing_path(str(cfg.vae_model), self.runtime_roots)
             self.cfg = cfg
             self.sample_rate = int(getattr(cfg, "sample_rate", 48000))
             progress.update(1, label="读取模型配置")

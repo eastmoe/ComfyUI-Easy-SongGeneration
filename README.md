@@ -42,8 +42,14 @@ ComfyUI/models/SongGeneration/
   SongGeneration-v2-large/
     config.yaml
     model.pt
-  ckpt/
-    ...
+  common/
+    model_1rvq/
+      model_2_fixed.safetensors
+    model_septoken/
+      model_2.safetensors
+    vae/
+      stable_audio_1920_vae.json
+      autoencoder_music_1320k.ckpt
   third_party/
     demucs/
       ckpt/
@@ -72,7 +78,7 @@ ComfyUI/models/SongGeneration/
 2. `ComfyUI/models/SongGeneration`。
 3. 插件内置的 `songgeneration` 目录。
 
-如果模型的 `config.yaml` 中引用了 `ckpt/...` 一类相对路径，请把对应目录放到模型目录旁边，或放到 `ComfyUI/models/SongGeneration` 下。
+如果模型的 `config.yaml` 中引用了 `common/...` 或旧版 `ckpt/...` 一类相对路径，请把对应目录放到模型目录旁边，或放到 `ComfyUI/models/SongGeneration` 下。节点会兼容 `common` 与 `ckpt` 两种目录名：优先使用配置中写明的路径，找不到时会在两者之间自动 fallback。
 
 使用外部音频作为参考音频时，需要 Demucs 文件：
 
