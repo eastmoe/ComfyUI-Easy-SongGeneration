@@ -11,10 +11,12 @@
 
 
 # alias-free-torch>=0.0.6  # replaced by local alias_free_torch shim
-diffusers>=0.37.1,<0.38
+
 # einops-exts>=0.0.4  # replaced by local einops_exts.py helpers backed by einops
-huggingface-hub>=0.34.0,<2.0
+
 # julius>=0.2.7  # replaced by torchaudio.functional.resample shim
+diffusers>=0.37.1,<0.38
+huggingface-hub>=0.34.0,<2.0
 k-diffusion>=0.1.1,<0.2
 lameenc>=1.8.1
 librosa>=0.11.0
