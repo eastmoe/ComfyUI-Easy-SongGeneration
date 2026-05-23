@@ -8,6 +8,9 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch.nn.utils import weight_norm
 
+# Local replacement for the small vector-quantize-pytorch surface used here:
+# - code indices -> vectors is F.embedding in embed_code()
+# - encoder-side quantization is nearest-neighbor lookup in decode_latents()
 def WNConv1d(*args, **kwargs):
     return weight_norm(nn.Conv1d(*args, **kwargs))
 
@@ -86,7 +89,7 @@ class VectorQuantize(nn.Module):
         encodings = F.normalize(encodings)
         codebook = F.normalize(codebook)
 
-        # Compute euclidean distance with codebook
+        # Compute squared L2 distance with the normalized codebook.
         dist = (
             encodings.pow(2).sum(1, keepdim=True)
             - 2 * encodings @ codebook.t()
