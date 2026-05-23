@@ -25,7 +25,7 @@ git clone https://github.com/eastmoe/ComfyUI-Easy-SongGeneration.git
 
 然后重启 ComfyUI。
 
-本仓库已经把多个上游运行时依赖替换为本地轻量实现。ComfyUI Manager 可读取根目录 `requirements.txt` 安装必要的 Python 包；`torch` 和 `torchaudio` 请按 ComfyUI 当前环境的 CUDA/HIP 版本安装或沿用现有版本。
+本仓库已经把多个上游运行时依赖替换为本地轻量实现。
 
 ## 模型放置
 
@@ -222,7 +222,6 @@ ComfyUI-Easy-SongGeneration/
 
 ## 使用提示
 
-- 推荐先使用 `加载模型` 节点加载一次模型，再把 `songgen_model` 输出连接到生成节点。
 - 多个生成节点可以复用同一个 `songgen_model`，不必重复加载。
 - 生成结束后如果需要释放显存，运行 `释放模型` 节点。
 - 如果显存紧张，优先尝试开启 `分段加载`、降低精度或启用量化；如果音质或兼容性异常，先关闭 VAE 量化。
