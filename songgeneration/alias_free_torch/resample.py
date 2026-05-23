@@ -1,0 +1,86 @@
+import torch.nn as nn
+import torch.nn.functional as F
+
+from .filter import LowPassFilter1d, LowPassFilter2d, kaiser_sinc_filter1d, kaiser_sinc_filter2d
+
+
+class UpSample1d(nn.Module):
+    def __init__(self, ratio=2, kernel_size=None):
+        super().__init__()
+        self.ratio = ratio
+        self.kernel_size = int(6 * ratio // 2) * 2 if kernel_size is None else kernel_size
+        self.stride = ratio
+        self.pad = self.kernel_size // ratio - 1
+        self.pad_left = self.pad * self.stride + (self.kernel_size - self.stride) // 2
+        self.pad_right = self.pad * self.stride + (self.kernel_size - self.stride + 1) // 2
+        self.register_buffer(
+            "filter",
+            kaiser_sinc_filter1d(cutoff=0.5 / ratio, half_width=0.6 / ratio, kernel_size=self.kernel_size),
+        )
+
+    def forward(self, x):
+        channels = x.shape[1]
+        x = F.pad(x, (self.pad, self.pad), mode="replicate")
+        x = self.ratio * F.conv_transpose1d(
+            x,
+            self.filter.expand(channels, -1, -1),
+            stride=self.stride,
+            groups=channels,
+        )
+        return x[..., self.pad_left : -self.pad_right]
+
+
+class DownSample1d(nn.Module):
+    def __init__(self, ratio=2, kernel_size=None):
+        super().__init__()
+        kernel_size = int(6 * ratio // 2) * 2 if kernel_size is None else kernel_size
+        self.lowpass = LowPassFilter1d(
+            cutoff=0.5 / ratio,
+            half_width=0.6 / ratio,
+            stride=ratio,
+            kernel_size=kernel_size,
+        )
+
+    def forward(self, x):
+        return self.lowpass(x)
+
+
+class UpSample2d(nn.Module):
+    def __init__(self, ratio=2, kernel_size=None):
+        super().__init__()
+        self.ratio = ratio
+        self.kernel_size = int(6 * ratio // 2) * 2 if kernel_size is None else kernel_size
+        self.stride = ratio
+        self.pad = self.kernel_size // 2 - ratio // 2
+        self.pad_left = self.pad * self.stride + (self.kernel_size - self.stride) // 2
+        self.pad_right = self.pad * self.stride + (self.kernel_size - self.stride + 1) // 2
+        self.register_buffer(
+            "filter",
+            kaiser_sinc_filter2d(cutoff=0.5 / ratio, half_width=0.6 / ratio, kernel_size=self.kernel_size),
+        )
+
+    def forward(self, x):
+        channels = x.shape[1]
+        x = F.pad(x, (self.pad, self.pad, self.pad, self.pad), mode="replicate")
+        x = self.ratio**2 * F.conv_transpose2d(
+            x,
+            self.filter.expand(channels, -1, -1, -1),
+            stride=self.stride,
+            groups=channels,
+        )
+        return x[..., self.pad_left : -self.pad_right, self.pad_left : -self.pad_right]
+
+
+class DownSample2d(nn.Module):
+    def __init__(self, ratio=2, kernel_size=None):
+        super().__init__()
+        kernel_size = int(6 * ratio // 2) * 2 if kernel_size is None else kernel_size
+        self.lowpass = LowPassFilter2d(
+            cutoff=0.5 / ratio,
+            half_width=0.6 / ratio,
+            stride=ratio,
+            kernel_size=kernel_size,
+        )
+
+    def forward(self, x):
+        return self.lowpass(x)
