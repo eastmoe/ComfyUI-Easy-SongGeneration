@@ -14,7 +14,7 @@ from .config import (
     _tr_mapping,
     _tr_names,
     _tr_text,
-    _ui,
+    _ui_text,
 )
 from .downloader import DOWNLOAD_SOURCES, SONGGEN_DOWNLOAD_CHOICES, download_songgeneration_assets
 from .model import _load_model
@@ -23,26 +23,26 @@ from .runtime import _model_choices, _to_comfy_audio
 
 def _base_inputs() -> dict[str, Any]:
     return {
-        "songgen_model": (SONGGEN_MODEL_TYPE, _ui("模型", "SongGeneration 模型加载节点输出。")),
+        "songgen_model": (SONGGEN_MODEL_TYPE, _ui_text("ui.common.songgen_model", "模型", "SongGeneration 模型加载节点输出。")),
         "lyrics": (
             "STRING",
-            _ui("歌词", "SongGeneration 段落格式歌词，例如 [verse] ... ; [chorus] ...。", multiline=True),
+            _ui_text("ui.common.lyrics", "歌词", "SongGeneration 段落格式歌词，例如 [verse] ... ; [chorus] ...。", multiline=True),
         ),
         "descriptions": (
             "STRING",
-            _ui("描述", "风格、情绪、乐器、人声等逗号分隔提示词。", multiline=True, default="female, pop, energetic, piano, drum kit"),
+            _ui_text("ui.common.descriptions", "描述", "风格、情绪、乐器、人声等逗号分隔提示词。", multiline=True, default="female, pop, energetic, piano, drum kit"),
         ),
-        "seed": ("INT", _ui("种子", "-1 使用当前时间。", default=-1, min=-1, max=2**31 - 1)),
-        "duration": ("FLOAT", _ui("时长", "0 使用模型 config.yaml 的 max_dur。", default=0.0, min=0.0, max=270.0, step=1.0)),
-        "extend_stride": ("FLOAT", _ui("扩展步长", "长音频生成步长，通常保持 5。", default=5.0, min=1.0, max=60.0, step=1.0)),
-        "temperature": ("FLOAT", _ui("温度", "0 使用原推理默认值。", default=0.0, min=0.0, max=2.0, step=0.05)),
-        "cfg_coef": ("FLOAT", _ui("CFG", "Classifier-free guidance 系数。", default=1.5, min=0.0, max=10.0, step=0.1)),
-        "top_k": ("INT", _ui("Top K", "0 使用原推理默认值。", default=0, min=0, max=10000)),
-        "top_p": ("FLOAT", _ui("Top P", "0 关闭 top-p。", default=0.0, min=0.0, max=1.0, step=0.01)),
-        "use_sampling": ("BOOLEAN", _ui("采样", "关闭后使用 greedy decoding。", default=True)),
-        "record_tokens": ("BOOLEAN", _ui("记录 Tokens", "保持与原推理脚本一致。", default=True)),
-        "record_window": ("INT", _ui("Token 窗口", "Token recording window。", default=50, min=1, max=1000)),
-        "chunk_size": ("INT", _ui("解码块大小", "Diffusion decoding chunk size。", default=128, min=16, max=1024, step=16)),
+        "seed": ("INT", _ui_text("ui.common.seed", "种子", "-1 使用当前时间。", default=-1, min=-1, max=2**31 - 1)),
+        "duration": ("FLOAT", _ui_text("ui.common.duration", "时长", "0 使用模型 config.yaml 的 max_dur。", default=0.0, min=0.0, max=270.0, step=1.0)),
+        "extend_stride": ("FLOAT", _ui_text("ui.common.extend_stride", "扩展步长", "长音频生成步长，通常保持 5。", default=5.0, min=1.0, max=60.0, step=1.0)),
+        "temperature": ("FLOAT", _ui_text("ui.common.temperature", "温度", "0 使用原推理默认值。", default=0.0, min=0.0, max=2.0, step=0.05)),
+        "cfg_coef": ("FLOAT", _ui_text("ui.common.cfg_coef", "CFG", "Classifier-free guidance 系数。", default=1.5, min=0.0, max=10.0, step=0.1)),
+        "top_k": ("INT", _ui_text("ui.common.top_k", "Top K", "0 使用原推理默认值。", default=0, min=0, max=10000)),
+        "top_p": ("FLOAT", _ui_text("ui.common.top_p", "Top P", "0 关闭 top-p。", default=0.0, min=0.0, max=1.0, step=0.01)),
+        "use_sampling": ("BOOLEAN", _ui_text("ui.common.use_sampling", "采样", "关闭后使用 greedy decoding。", default=True)),
+        "record_tokens": ("BOOLEAN", _ui_text("ui.common.record_tokens", "记录 Tokens", "保持与原推理脚本一致。", default=True)),
+        "record_window": ("INT", _ui_text("ui.common.record_window", "Token 窗口", "Token recording window。", default=50, min=1, max=1000)),
+        "chunk_size": ("INT", _ui_text("ui.common.chunk_size", "解码块大小", "Diffusion decoding chunk size。", default=128, min=16, max=1024, step=16)),
     }
 
 
@@ -82,31 +82,31 @@ class SongGenerationLoadModel:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model": (_model_choices(), _ui("模型目录", "包含 config.yaml 和 model.pt 的模型子文件夹。")),
-                "version": (["auto", "v2", "v1"], _ui("版本", "auto 会根据模型目录名推断 v1/v2。")),
+                "model": (_model_choices(), _ui_text("ui.load_model.model", "模型目录", "包含 config.yaml 和 model.pt 的模型子文件夹。")),
+                "version": (["auto", "v2", "v1"], _ui_text("ui.load_model.version", "版本", "auto 会根据模型目录名推断 v1/v2。")),
                 "runtime_root": (
                     "STRING",
-                    _ui("运行时根目录", "auto 会搜索模型目录、ComfyUI/models/SongGeneration 和插件目录。", default="auto"),
+                    _ui_text("ui.load_model.runtime_root", "运行时根目录", "auto 会搜索模型目录、ComfyUI/models/SongGeneration 和插件目录。", default="auto"),
                 ),
-                "gpu_id": ("INT", _ui("GPU ID", "-1 使用当前 CUDA 设备。", default=-1, min=-1, max=16)),
-                "use_flash_attn": ("BOOLEAN", _ui("Flash Attention", "环境支持时可开启。", default=True)),
-                "segmented_load": ("BOOLEAN", _ui("分段加载", "按模块分段加载/移动权重，减少加载时显存峰值。", default=True)),
+                "gpu_id": ("INT", _ui_text("ui.load_model.gpu_id", "GPU ID", "-1 使用当前 CUDA 设备。", default=-1, min=-1, max=16)),
+                "use_flash_attn": ("BOOLEAN", _ui_text("ui.load_model.use_flash_attn", "Flash Attention", "环境支持时可开启。", default=True)),
+                "segmented_load": ("BOOLEAN", _ui_text("ui.load_model.segmented_load", "分段加载", "按模块分段加载/移动权重，减少加载时显存峰值。", default=True)),
                 "quantization": (
                     _QUANTIZATION_CHOICES,
-                    _ui("量化格式", "Linear 权重量化格式；none 表示不量化。缓存位于 ComfyUI/models/SongGeneration-cache。"),
+                    _ui_text("ui.load_model.quantization", "量化格式", "Linear 权重量化格式；none 表示不量化。缓存位于 ComfyUI/models/SongGeneration-cache。"),
                 ),
                 "quantization_target": (
                     _QUANTIZATION_TARGETS,
-                    _ui("量化范围", "选择要量化的模块。VAE 量化可能影响音质或兼容性。"),
+                    _ui_text("ui.load_model.quantization_target", "量化范围", "选择要量化的模块。VAE 量化可能影响音质或兼容性。"),
                 ),
                 "rebuild_quantization_cache": (
                     "BOOLEAN",
-                    _ui("重建量化缓存", "忽略已有量化缓存并重新生成。", default=False),
+                    _ui_text("ui.load_model.rebuild_quantization_cache", "重建量化缓存", "忽略已有量化缓存并重新生成。", default=False),
                 ),
-                "llm_precision": (_DTYPE_CHOICES, _ui("LLM 精度", "LLM 推理/权重计算精度。", default="float16")),
-                "diffusion_precision": (_DTYPE_CHOICES, _ui("Diffusion 精度", "音频 Diffusion 解码模型计算精度。", default="float16")),
-                "vae_precision": (_DTYPE_CHOICES, _ui("VAE 精度", "音频 VAE 编解码计算精度。", default="float32")),
-                "reload_model": ("BOOLEAN", _ui("重新加载", "忽略缓存并重新加载权重。", default=False)),
+                "llm_precision": (_DTYPE_CHOICES, _ui_text("ui.load_model.llm_precision", "LLM 精度", "LLM 推理/权重计算精度。", default="float16")),
+                "diffusion_precision": (_DTYPE_CHOICES, _ui_text("ui.load_model.diffusion_precision", "Diffusion 精度", "音频 Diffusion 解码模型计算精度。", default="float16")),
+                "vae_precision": (_DTYPE_CHOICES, _ui_text("ui.load_model.vae_precision", "VAE 精度", "音频 VAE 编解码计算精度。", default="float32")),
+                "reload_model": ("BOOLEAN", _ui_text("ui.load_model.reload_model", "重新加载", "忽略缓存并重新加载权重。", default=False)),
             }
         }
 
@@ -173,13 +173,13 @@ class SongGenerationDownloadModel:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "source": (DOWNLOAD_SOURCES, _ui("下载源", "可选 hf-mirror.com 或 huggingface.co。")),
+                "source": (DOWNLOAD_SOURCES, _ui_text("ui.download_model.source", "下载源", "可选 hf-mirror.com 或 huggingface.co。")),
                 "model": (
                     SONGGEN_DOWNLOAD_CHOICES,
-                    _ui("模型目录", "common 和 third_party 始终下载；这里选择额外下载的 SongGeneration 模型。"),
+                    _ui_text("ui.download_model.model", "模型目录", "common 和 third_party 始终下载；这里选择额外下载的 SongGeneration 模型。"),
                 ),
-                "revision": ("STRING", _ui("分支/版本", "Hugging Face revision，通常保持 main。", default="main")),
-                "overwrite_existing": ("BOOLEAN", _ui("覆盖已有文件", "关闭时会跳过大小一致的本地文件。", default=False)),
+                "revision": ("STRING", _ui_text("ui.download_model.revision", "分支/版本", "Hugging Face revision，通常保持 main。", default="main")),
+                "overwrite_existing": ("BOOLEAN", _ui_text("ui.download_model.overwrite_existing", "覆盖已有文件", "关闭时会跳过大小一致的本地文件。", default=False)),
             }
         }
 
@@ -211,8 +211,8 @@ class SongGenerationReleaseModel:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "songgen_model": (SONGGEN_MODEL_TYPE, _ui("模型", "要释放的 SongGeneration 模型。")),
-                "clear_cuda_cache": ("BOOLEAN", _ui("清理显存缓存", "释放后调用 torch.cuda.empty_cache。", default=True)),
+                "songgen_model": (SONGGEN_MODEL_TYPE, _ui_text("ui.release_model.songgen_model", "模型", "要释放的 SongGeneration 模型。")),
+                "clear_cuda_cache": ("BOOLEAN", _ui_text("ui.release_model.clear_cuda_cache", "清理显存缓存", "释放后调用 torch.cuda.empty_cache。", default=True)),
             }
         }
 
@@ -233,13 +233,13 @@ class _GenerateOneBase:
         return {
             "required": {
                 **_base_inputs(),
-                "auto_prompt_audio_type": (AUTO_PROMPT_TYPES, _ui("自动参考风格", "None 表示不使用自动参考音频。")),
+                "auto_prompt_audio_type": (AUTO_PROMPT_TYPES, _ui_text("ui.common.auto_prompt_audio_type", "自动参考风格", "None 表示不使用自动参考音频。")),
             },
             "optional": {
-                "prompt_audio": ("AUDIO", _ui("参考音频", "可选 ComfyUI AUDIO，会优先于自动参考风格。")),
+                "prompt_audio": ("AUDIO", _ui_text("ui.common.prompt_audio", "参考音频", "可选 ComfyUI AUDIO，会优先于自动参考风格。")),
                 "prompt_audio_batch_index": (
                     "INT",
-                    _ui("音频批次", "当 AUDIO 包含 batch 时选择其中一条。", default=0, min=0, max=4096),
+                    _ui_text("ui.common.prompt_audio_batch_index", "音频批次", "当 AUDIO 包含 batch 时选择其中一条。", default=0, min=0, max=4096),
                 ),
             },
         }
@@ -287,13 +287,13 @@ class SongGenerationGenerateSeparate:
         return {
             "required": {
                 **_base_inputs(),
-                "auto_prompt_audio_type": (AUTO_PROMPT_TYPES, _ui("自动参考风格", "None 表示不使用自动参考音频。")),
+                "auto_prompt_audio_type": (AUTO_PROMPT_TYPES, _ui_text("ui.common.auto_prompt_audio_type", "自动参考风格", "None 表示不使用自动参考音频。")),
             },
             "optional": {
-                "prompt_audio": ("AUDIO", _ui("参考音频", "可选 ComfyUI AUDIO，会优先于自动参考风格。")),
+                "prompt_audio": ("AUDIO", _ui_text("ui.common.prompt_audio", "参考音频", "可选 ComfyUI AUDIO，会优先于自动参考风格。")),
                 "prompt_audio_batch_index": (
                     "INT",
-                    _ui("音频批次", "当 AUDIO 包含 batch 时选择其中一条。", default=0, min=0, max=4096),
+                    _ui_text("ui.common.prompt_audio_batch_index", "音频批次", "当 AUDIO 包含 batch 时选择其中一条。", default=0, min=0, max=4096),
                 ),
             },
         }

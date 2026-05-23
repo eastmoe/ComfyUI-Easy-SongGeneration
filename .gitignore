@@ -2,5 +2,6 @@ launchs/
 *.log
 temp/
 tmp/
+models/
 **/__pycache__
 sample/generated/

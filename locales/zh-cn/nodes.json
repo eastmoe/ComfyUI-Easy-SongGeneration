@@ -98,6 +98,24 @@
         "tooltip": "当 AUDIO 包含 batch 时选择其中一条。"
       }
     },
+    "download_model": {
+      "source": {
+        "display_name": "下载源",
+        "tooltip": "可选 hf-mirror.com 或 huggingface.co。"
+      },
+      "model": {
+        "display_name": "模型目录",
+        "tooltip": "common 和 third_party 始终下载；这里选择额外下载的 SongGeneration 模型。"
+      },
+      "revision": {
+        "display_name": "分支/版本",
+        "tooltip": "Hugging Face revision，通常保持 main。"
+      },
+      "overwrite_existing": {
+        "display_name": "覆盖已有文件",
+        "tooltip": "关闭时会跳过大小一致的本地文件。"
+      }
+    },
     "load_model": {
       "model": {
         "display_name": "模型目录",

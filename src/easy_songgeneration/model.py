@@ -367,11 +367,18 @@ class SongGenerationModelHandle:
 
         auto_type = options.auto_prompt_audio_type
         if auto_type and auto_type != "None":
-            if auto_type not in self.auto_prompt:
+            if not isinstance(self.auto_prompt, dict) or auto_type not in self.auto_prompt:
                 raise ValueError(f"Unsupported auto_prompt_audio_type: {auto_type}")
             sg_generate = self._modules["sg_generate"]
             lang = sg_generate.check_language_by_text(options.lyrics)
-            pool = self.auto_prompt[auto_type][lang]
+            prompt_group = self.auto_prompt[auto_type]
+            if not isinstance(prompt_group, dict):
+                raise ValueError(f"Invalid auto prompt payload for type: {auto_type}")
+            if lang not in prompt_group:
+                lang = "en" if "en" in prompt_group else next(iter(prompt_group), "")
+            pool = prompt_group.get(lang) or []
+            if not pool:
+                raise ValueError(f"No auto prompt tokens available for type={auto_type!r}, language={lang!r}.")
             prompt_token = pool[np.random.randint(0, len(pool))]
             return {
                 "pmt_wav": prompt_token[:, [0], :],

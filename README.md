@@ -25,7 +25,7 @@ git clone https://github.com/eastmoe/ComfyUI-Easy-SongGeneration.git
 
 然后重启 ComfyUI。
 
-本仓库已经把多个上游运行时依赖替换为本地轻量实现，`songgeneration/requirements.txt` 中主要保留依赖说明。不需要额外安装大量上游依赖；如果你的 ComfyUI 环境缺少基础依赖，请按 ComfyUI 当前环境的 PyTorch/CUDA/HIP 版本补齐。
+本仓库已经把多个上游运行时依赖替换为本地轻量实现。ComfyUI Manager 可读取根目录 `requirements.txt` 安装必要的 Python 包；`torch` 和 `torchaudio` 请按 ComfyUI 当前环境的 CUDA/HIP 版本安装或沿用现有版本。
 
 ## 模型放置
 
@@ -173,7 +173,7 @@ songgeneration/tools/new_auto_prompt.pt
 - 新增模型自动下载节点，支持从 `hf-mirror.com` 或 `huggingface.co` 下载 `eastmoe/SongGeneration` 中的必需运行时目录和选中的模型目录。
 - 新增 Linear 权重量化、量化缓存、LLM/Diffusion/VAE 精度选择和分段加载，改善显存占用与加载体验。
 - 新增 ComfyUI 右键菜单适配、中文节点翻译、加载与生成进度条，并支持 ComfyUI 中断回调。
-- 将原单文件节点实现拆分为 `easy_songgeneration_nodes` 包，分离配置、运行时、模型加载、量化、进度和节点定义，便于维护。
+- 将节点入口与实现拆分：根目录保留 ComfyUI 入口，内部实现放入 `src/easy_songgeneration`，并把字符串、文档、依赖和模型目录职责分离。
 
 ## 目录结构
 
@@ -181,20 +181,25 @@ songgeneration/tools/new_auto_prompt.pt
 ComfyUI-Easy-SongGeneration/
   __init__.py                         # ComfyUI 插件入口
   nodes.py                            # 兼容入口，导出节点映射
+  requirements.txt                    # ComfyUI Manager 可读取的运行依赖
   README.md                           # 本说明文档
-  local/
+  docs/
+    structure.md                      # 目录职责说明
+  locales/
     zh-cn/
       nodes.json                      # ComfyUI 中文节点名称、提示和返回值翻译
-  easy_songgeneration_nodes/
+  src/
     __init__.py
-    config.py                         # 节点常量、模型路径、量化/精度选项、翻译读取
-    downloader.py                     # Hugging Face / hf-mirror 模型下载
-    model.py                          # 模型加载、缓存、推理调度、显存释放
-    nodes.py                          # ComfyUI 节点定义
-    options.py                        # 生成参数数据结构
-    progress.py                       # ComfyUI 进度条和中断桥接
-    quantization.py                   # Linear 权重量化与缓存逻辑
-    runtime.py                        # 路径解析、AUDIO 转换、临时音频写入
+    easy_songgeneration/
+      __init__.py
+      config.py                       # 节点常量、模型路径、量化/精度选项、翻译读取
+      downloader.py                   # Hugging Face / hf-mirror 模型下载
+      model.py                        # 模型加载、缓存、推理调度、显存释放
+      nodes.py                        # ComfyUI 节点定义
+      options.py                      # 生成参数数据结构
+      progress.py                     # ComfyUI 进度条和中断桥接
+      quantization.py                 # Linear 权重量化与缓存逻辑
+      runtime.py                      # 路径解析、AUDIO 转换、临时音频写入
   songgeneration/
     README.md                         # 精简后 SongGeneration 推理代码说明
     generate.py                       # CLI/推理辅助入口
@@ -210,9 +215,10 @@ ComfyUI-Easy-SongGeneration/
     alias_free_torch/                 # 本地 alias-free-torch 兼容实现
     k_diffusion/                      # 本地 k-diffusion 推理子集
     img/                              # 原项目图片资源
-  models/                             # 仓库内临时/本地模型目录，不建议提交大模型
   temp/                               # 临时文件目录
 ```
+
+模型文件和量化缓存不放在插件仓库内，请统一使用 `ComfyUI/models/SongGeneration` 与 `ComfyUI/models/SongGeneration-cache`。
 
 ## 使用提示
 

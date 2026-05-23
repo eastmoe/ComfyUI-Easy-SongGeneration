@@ -54,8 +54,15 @@ def _resolve_model_dir(model_name: str) -> Path:
         )
     path = Path(name).expanduser()
     if path.is_absolute():
-        return path
-    return _songgen_model_root() / name
+        model_dir = path
+    else:
+        model_dir = _songgen_model_root() / name
+    if not model_dir.is_dir():
+        raise FileNotFoundError(f"SongGeneration model directory does not exist: {model_dir}")
+    missing = [filename for filename in ("config.yaml", "model.pt") if not (model_dir / filename).is_file()]
+    if missing:
+        raise FileNotFoundError(f"SongGeneration model directory is missing {', '.join(missing)}: {model_dir}")
+    return model_dir
 
 
 def _infer_version(model_dir: Path, version: str) -> str:
@@ -126,20 +133,33 @@ def _resolve_prefixed_existing_path(value: str | None, roots: list[Path]) -> str
 
 
 def _resolve_runtime_file(relative_path: str, roots: list[Path]) -> str:
+    searched = []
     for root in roots:
         candidate = root / relative_path
+        searched.append(candidate)
         if candidate.is_file():
             return str(candidate)
-    return str(SONGGEN_DIR / relative_path)
+    candidate = SONGGEN_DIR / relative_path
+    searched.append(candidate)
+    if candidate.is_file():
+        return str(candidate)
+    searched_text = "\n  - ".join(str(path) for path in searched)
+    raise FileNotFoundError(f"Required SongGeneration runtime file was not found: {relative_path}\nSearched:\n  - {searched_text}")
 
 
 def _register_resolvers(model_dir: Path):
     from omegaconf import OmegaConf
 
-    OmegaConf.register_new_resolver("eval", lambda x: eval(x))
-    OmegaConf.register_new_resolver("concat", lambda *x: [xxx for xx in x for xxx in xx])
-    OmegaConf.register_new_resolver("get_fname", lambda: model_dir.name)
-    OmegaConf.register_new_resolver("load_yaml", lambda x: list(OmegaConf.load(x)))
+    def register(name: str, resolver) -> None:
+        try:
+            OmegaConf.register_new_resolver(name, resolver, replace=True)
+        except TypeError:
+            OmegaConf.register_new_resolver(name, resolver)
+
+    register("eval", lambda x: eval(x))
+    register("concat", lambda *x: [xxx for xx in x for xxx in xx])
+    register("get_fname", lambda: model_dir.name)
+    register("load_yaml", lambda x: list(OmegaConf.load(x)))
     return OmegaConf
 
 
@@ -157,6 +177,10 @@ def _audio_to_waveform(audio: dict[str, Any], batch_index: int = 0) -> tuple[tor
         waveform = waveform.unsqueeze(0)
     elif waveform.ndim != 2:
         raise ValueError(f"Unsupported AUDIO waveform shape: {tuple(waveform.shape)}")
+    if waveform.numel() == 0:
+        raise ValueError("AUDIO waveform is empty.")
+    if not torch.isfinite(waveform).all():
+        raise ValueError("AUDIO waveform contains NaN or Inf values.")
     return waveform.contiguous(), int(audio.get("sample_rate") or 48000)
 
 

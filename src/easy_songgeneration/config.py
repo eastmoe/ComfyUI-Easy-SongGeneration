@@ -14,7 +14,7 @@ try:
 except ImportError:
     folder_paths = None
 
-PLUGIN_DIR = Path(__file__).resolve().parent.parent
+PLUGIN_DIR = Path(__file__).resolve().parents[2]
 SONGGEN_DIR = PLUGIN_DIR / "songgeneration"
 DEFAULT_LOCALE = "zh-cn"
 SONGGEN_MODEL_TYPE = "SONGGEN_MODEL"
@@ -51,10 +51,20 @@ _QUANTIZATION_TARGETS = ["LLM", "LLM+Diffusion", "LLM+Diffusion+VAE"]
 
 def _load_localization(locale: str) -> dict[str, Any]:
     locale_name = (locale or DEFAULT_LOCALE).strip().lower()
-    path = PLUGIN_DIR / "local" / locale_name / "nodes.json"
+    paths = [
+        PLUGIN_DIR / "locales" / locale_name / "nodes.json",
+        PLUGIN_DIR / "local" / locale_name / "nodes.json",
+    ]
+    path = paths[0]
     try:
-        with path.open("r", encoding="utf-8") as file:
-            data = json.load(file)
+        for candidate in paths:
+            if candidate.is_file():
+                path = candidate
+                with candidate.open("r", encoding="utf-8") as file:
+                    data = json.load(file)
+                break
+        else:
+            return {}
     except FileNotFoundError:
         return {}
     except Exception as exc:
@@ -103,11 +113,19 @@ def _ui(display_name: str, tooltip: str, **extra: Any) -> dict[str, Any]:
     return extra
 
 
+def _ui_text(path: str, display_name: str, tooltip: str, **extra: Any) -> dict[str, Any]:
+    value = _tr(path, {})
+    if isinstance(value, dict):
+        display_name = value.get("display_name", display_name)
+        tooltip = value.get("tooltip", tooltip)
+    return _ui(display_name, tooltip, **extra)
+
+
 def _comfy_models_dir() -> Path:
     if folder_paths is not None and getattr(folder_paths, "models_dir", None):
         return Path(folder_paths.models_dir)
     comfy_root = PLUGIN_DIR.parent.parent
-    return comfy_root / "models" if (comfy_root / "models").exists() else PLUGIN_DIR / "models"
+    return comfy_root / "models"
 
 
 def _songgen_model_root() -> Path:

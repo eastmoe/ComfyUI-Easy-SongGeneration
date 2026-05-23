@@ -94,6 +94,15 @@ def _file_size(item: dict[str, Any]) -> int | None:
     return None
 
 
+def _target_path(target_root: Path, relative: str) -> Path:
+    target = target_root / relative
+    root = target_root.resolve()
+    resolved = target.resolve()
+    if root != resolved and root not in resolved.parents:
+        raise RuntimeError(f"Refusing to write outside SongGeneration model root: {relative}")
+    return target
+
+
 def _is_current(path: Path, size: int | None) -> bool:
     if not path.is_file():
         return False
@@ -135,7 +144,7 @@ def _download_one(
 ) -> tuple[str, int]:
     relative = item["path"]
     size = _file_size(item)
-    target = target_root / relative
+    target = _target_path(target_root, relative)
     target.parent.mkdir(parents=True, exist_ok=True)
 
     if not overwrite_existing and _is_current(target, size):
@@ -199,7 +208,7 @@ def download_songgeneration_assets(
     planned_bytes = 0
     for item in files:
         size = _file_size(item)
-        target = target_root / item["path"]
+        target = _target_path(target_root, item["path"])
         if overwrite_existing or not _is_current(target, size):
             planned_bytes += size or 1
 
@@ -210,7 +219,7 @@ def download_songgeneration_assets(
     try:
         for item in files:
             size = _file_size(item)
-            target = target_root / item["path"]
+            target = _target_path(target_root, item["path"])
             if not overwrite_existing and _is_current(target, size):
                 skipped += 1
                 continue
