@@ -1,15 +1,12 @@
 import os
 import gc
 import re
-import sys
 
 import torch
 
-import json
 import numpy as np
 from omegaconf import OmegaConf
 
-from codeclm.trainer.codec_song_pl import CodecLM_PL
 from codeclm.models import CodecLM
 from codeclm.models import builders
 
@@ -58,7 +55,9 @@ class LeVoInference(torch.nn.Module):
         )
 
 
-    def forward(self, lyric: str, description: str = None, prompt_audio_path: os.PathLike = None, genre: str = None, auto_prompt_path: os.PathLike = None, gen_type: str = "mixed", params = dict()):
+    def forward(self, lyric: str, description: str = None, prompt_audio_path: os.PathLike = None, genre: str = None, auto_prompt_path: os.PathLike = None, gen_type: str = "mixed", params = None):
+        if params is None:
+            params = {}
         if prompt_audio_path is not None and os.path.exists(prompt_audio_path):
             separator = Separator()
             audio_tokenizer = builders.get_audio_tokenizer_model(self.cfg.audio_tokenizer_checkpoint, self.cfg)
@@ -139,9 +138,10 @@ class LeVoInference(torch.nn.Module):
                 tokens = model.generate(**generate_inp, return_tokens=True)
                 if offload_audiolm:
                     offload_profiler.reset_empty_cache_mem_line()
-        offload_profiler.stop()
-        del offload_profiler
-        del audiolm_offload_param
+        if offload_audiolm:
+            offload_profiler.stop()
+            del offload_profiler
+            del audiolm_offload_param
         del model
         audiolm = audiolm.cpu()
         del audiolm

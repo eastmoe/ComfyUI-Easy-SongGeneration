@@ -1,15 +1,13 @@
 import os
 import re
-import sys
 
 import torch
 
-import json
 import numpy as np
 from omegaconf import OmegaConf
 
-from codeclm.trainer.codec_song_pl import CodecLM_PL
 from codeclm.models import CodecLM
+from codeclm.models import builders
 
 from separator import Separator
 
@@ -46,15 +44,23 @@ class LeVoInference(torch.nn.Module):
         self.cfg.mode = 'inference'
         self.max_duration = self.cfg.max_dur
 
-        # Define model or load pretrained model
-        model_light = CodecLM_PL(self.cfg, pt_path, version="v2")
+        self.model_audio_tokenizer = builders.get_audio_tokenizer_model(self.cfg.audio_tokenizer_checkpoint, self.cfg)
+        self.model_seperate_tokenizer = (
+            builders.get_audio_tokenizer_model(self.cfg.audio_tokenizer_checkpoint_sep, self.cfg)
+            if "audio_tokenizer_checkpoint_sep" in self.cfg.keys()
+            else None
+        )
 
-        model_light = model_light.eval().cuda()
-        model_light.audiolm.cfg = self.cfg
-
-        self.model_lm = model_light.audiolm
-        self.model_audio_tokenizer = model_light.audio_tokenizer
-        self.model_seperate_tokenizer = model_light.seperate_tokenizer
+        self.model_lm = builders.get_lm_model(self.cfg, version="v2")
+        checkpoint = torch.load(pt_path, map_location="cpu")
+        audiolm_state_dict = {
+            k.replace("audiolm.", ""): v
+            for k, v in checkpoint.items()
+            if k.startswith("audiolm")
+        }
+        self.model_lm.load_state_dict(audiolm_state_dict, strict=False)
+        self.model_lm.cfg = self.cfg
+        self.model_lm = self.model_lm.eval().cuda().to(torch.float16)
 
         self.model = CodecLM(name = "tmp",
             lm = self.model_lm,
@@ -78,7 +84,9 @@ class LeVoInference(torch.nn.Module):
 
         self.model.set_generation_params(**self.default_params)
 
-    def forward(self, lyric: str, description: str = None, prompt_audio_path: os.PathLike = None, genre: str = None, auto_prompt_path: os.PathLike = None, gen_type: str = "mixed", params = dict()):
+    def forward(self, lyric: str, description: str = None, prompt_audio_path: os.PathLike = None, genre: str = None, auto_prompt_path: os.PathLike = None, gen_type: str = "mixed", params = None):
+        if params is None:
+            params = {}
         params = {**self.default_params, **params}
         self.model.set_generation_params(**params)
 

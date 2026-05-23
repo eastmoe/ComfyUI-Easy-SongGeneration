@@ -11,13 +11,11 @@
 
 🚀 We introduce LeVo 2 (SongGeneration 2), an open-source music foundation model designed to shatter the ceiling of open-source AI music by achieving true commercial-grade generation. 
 
-Through a large-scale, rigorous expert evaluation (20 industry professionals, 6 core dimensions, 100 songs per model), LeVo 2 (SongGeneration 2) has proven its superiority:
+- SongGeneration 2 focuses this repository on inference-only song generation with text descriptions and optional audio prompts.
 
-- 🏆 Commercial-Grade Musicality: Comprehensively outperforms all open-source baselines across Overall Quality, Melody, Arrangement, Sound Quality, and Structure. Its subjective generation quality successfully rivals top-tier closed-source commercial systems (e.g., MiniMax 2.5).
-- 🎯 Precise Lyric Accuracy: Achieves an outstanding Phoneme Error Rate (PER) of 8.55%, effectively solving the lyrical hallucination problem. This remarkable accuracy significantly outperforms top commercial models like Suno v5 (12.4%) and Mureka v8 (9.96%).
+- 🏆 Commercial-Grade Musicality: Generates full songs with vocals and accompaniment.
+- 🎯 Precise Lyric Accuracy: Supports structured lyrics and multilingual generation.
 - 🎛️ Exceptional Controllability: Highly responsive to multi-modal instructions, including text descriptions and audio prompts, allowing for precise control over the generated music.
-
-📊 *For detailed experimental setups and comprehensive metrics, please refer to the [Evaluation Performance](#Evaluation-Performance) section below or our upcoming technical report.*
 
 📢 *All the experimental results above are based on the latest checkpoint released on March 9th. If you downloaded the weights before March 9th, please re-download the latest checkpoint.*
 
@@ -27,7 +25,7 @@ Through a large-scale, rigorous expert evaluation (20 industry professionals, 6 
 * **2025.10.16 🔥**: Our [**Demo webpage**](https://huggingface.co/spaces/tencent/SongGeneration) now supports **full-length song generation (up to 4m30s)**! 🎶  Experience end-to-end music generation with vocals and accompaniment — try it out now!
 * **2025.10.15 🔥**: We have updated the codebase to improve **inference speed** and **generation quality**, and adapted it to the **latest model version**. Please **update to the newest code** to ensure the **best performance and user experience**.
 * **2025.10.14 🔥**: We have released the **large model (SongGeneration-large)**.
-* **2025.10.13 🔥**: We have released the **full time model (SongGeneration-base-full)** and **evaluation performance**.
+* **2025.10.13 🔥**: We have released the **full time model (SongGeneration-base-full)**.
 * **2025.10.12 🔥**: We have released the **english enhanced model (SongGeneration-base-new)**.
 * **2025.09.23 🔥**: We have released the [Data Processing Pipeline](https://github.com/tencent-ailab/SongPrep), which is capable of **analyzing the structure and lyrics** of entire songs and **providing precise timestamps** without the need for additional source separation. On the human-annotated test set [SSLD-200](https://huggingface.co/datasets/waytan22/SSLD-200), the model’s performance outperforms mainstream models including Gemini-2.5, Seed-ASR, and Qwen3-ASR.
 * **2025.07.25 🔥**: SongGeneration can now run with as little as **10GB of GPU memory**.
@@ -36,8 +34,6 @@ Through a large-scale, rigorous expert evaluation (20 industry professionals, 6 
 
 ## TODOs📋
 
-- [ ] Release the Automated Music Aesthetic Evaluation Framework.
-- [ ] Release finetuning scripts.
 - [ ] Release Music Codec and VAE.
 - [ ] Release SongGeneration-v2-fast.
 - [ ] Release SongGeneration-v2-medium.
@@ -70,7 +66,7 @@ Through a large-scale, rigorous expert evaluation (20 industry professionals, 6 
 
 <img src="img/over.jpg" alt="img" style="zoom:100%;" />
 
-To shatter the ceiling of open-source AI music and achieve commercial-grade generation, SongGeneration 2 introduces a paradigm shift in both its underlying architecture and training strategy.
+To shatter the ceiling of open-source AI music and achieve commercial-grade generation, SongGeneration 2 introduces a hybrid architecture for inference.
 
 1. Model Architecture: Hybrid LLM-Diffusion Architecture & Hierarchical Language Model
 
@@ -79,20 +75,6 @@ To shatter the ceiling of open-source AI music and achieve commercial-grade gene
    - **LeLM (The "Composer Brain"):** The language model manages the global musical structure and performance details.
    - **Diffusion (The "Hi-Fi Renderer"):** Guided by the language model, it synthesizes complex acoustic details for high-fidelity audio.
    - **Hierarchical Language Model:** We introduce a hierarchical language model for the parallel modeling of **Mixed Tokens** (to capture high-level semantics like melody and structure) and **Dual-Track Tokens** (to model vocal and accompaniment tracks in parallel for fine-grained acoustic details).
-
-2. Training Strategy: Automated Aesthetic Evaluation & Multi-stage Progressive Post-Training
-
-   To resolve lyrical hallucinations and stiff musicality, we utilize a highly structured training pipeline:
-
-   - **Automated Aesthetic Evaluation Framework:** We built a fine-grained evaluation framework trained on a massive expert-annotated dataset to provide the model with musicality priors.
-
-   - **Multi-stage Progressive Post-training:** We implemented a 3-stage alignment process:
-
-     **Stage 1 - SFT:** Narrows the data distribution using high-quality songs to build a solid generation baseline.
-
-     **Stage 2 - Large-scale Offline DPO:** Utilizes ~200k strict positive/negative pairs to completely eliminate lyrical hallucinations and stabilize controllability.
-
-     **Stage 3 - Semi-online DPO:** Periodically updates the model based strictly on aesthetic scores to maximize musicality limits.
 
 ## Installation
 
@@ -199,7 +181,7 @@ sh generate.sh ckpt_path lyrics.jsonl output_path --separate
 
 ## Input Guide
 
-An example input file can be found in `sample/lyrics.jsonl`  and  `sample/test100_v2_sg_des.jsonl` 
+An example input file can be found in `sample/lyrics.jsonl`.
 
 ### 🎵 Lyrics Input Format
 
@@ -242,7 +224,7 @@ The `gt_lyric` field defines the lyrics and structure of the song. It consists o
   [intro-medium]; [verse] 凌晨三点的便利店.冰柜发出持续的嗡鸣.穿西装的男人在挑饭团.领带松垮像投降的白旗.热食区的关东煮.在汤汁里慢慢膨胀 ; [chorus] 这里是城市的守夜人.收容所有流浪的灵魂.荧光灯照亮的面孔.都写着未完待续的故事 ; [inst-medium]; [verse] 收银员打着哈欠.扫描仪发出嘀嗒声响.找零的硬币落入掌心.带着金属的冰冷温度 ; [chorus] 这里是临时的避风港.用食物交换片刻温暖.即使最孤独的夜晚.也有泡面陪伴到天明 ; [bridge] 自动门开合之间.涌进带着酒气的风.一个女孩蹲在门口.喂食流浪的玳瑁猫 ; [chorus] 这里是不打烊的剧场.上演着无声的悲喜剧.而我们都是临时演员.在黎明前悄然退场 ; [outro-medium]
   ```
 
-  More examples can be found in `sample/test100_v2_sg_des.jsonl`.
+  More examples can be added by following the same format as `sample/lyrics.jsonl`.
 
 ### 📝 Description Input Format
 
@@ -294,20 +276,6 @@ You can start up the UI with the following command:
 ```bash
 sh tools/gradio/run.sh ckpt_path
 ```
-
-## Evaluation Performance
-
-To rigorously assess the generation capabilities of LeVo 2 (SongGeneration 2), we conducted a large-scale subjective evaluation involving 20 music professionals. The models were evaluated across six core dimensions: Overall Quality, Melody, Arrangement, Sound Quality-Instrument, Sound Quality-Vocal, and Structure.
-
-<img src="img/output.png" alt="img" style="zoom:100%;" />
-
-As shown in the benchmarking results above, LeVo 2 (SongGeneration 2) comprehensively outperforms all existing open-source baselines and achieves generation quality that directly rivals top-tier closed-source commercial models.
-
-### 📌 Notes on Evaluation & Generation
-
-- **Evaluation Data:** The evaluation results are based on 100 generated songs using descriptions. We also provide all inputs used for this benchmark in sample/test100_v2_sg_des.jsonl for reference and reproducibility.
-- **Impact of Audio Prompts:** Since the model attempts to clone the timbre and musical style of the given prompt audio, the choice of prompt audio can significantly affect generation performance, and may lead to fluctuations in the evaluation metrics.
-- **Importance of Lyric Formatting:** The format of the input lyrics has a strong impact on generation quality. If the output quality appears suboptimal, please check whether your lyrics format is strictly correct according to our formatting rules. You can find more examples of properly formatted inputs in sample/test100_v2_sg_des.jsonl.
 
 ## Citation
 

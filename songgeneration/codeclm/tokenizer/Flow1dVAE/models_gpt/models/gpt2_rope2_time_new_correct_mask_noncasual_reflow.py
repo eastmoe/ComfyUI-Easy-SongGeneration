@@ -1959,7 +1959,7 @@ class GPT2ForTokenClassification(GPT2PreTrainedModel):
     @add_start_docstrings_to_model_forward(GPT2_INPUTS_DOCSTRING)
     # fmt: off
     @add_code_sample_docstrings(
-        checkpoint="brad1141/gpt2-finetuned-comp2",
+        checkpoint="openai-community/gpt2",
         output_type=TokenClassifierOutput,
         config_class=_CONFIG_FOR_DOC,
         expected_loss=0.25,

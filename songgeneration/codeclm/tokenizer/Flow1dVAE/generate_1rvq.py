@@ -1,15 +1,8 @@
-import json
 import torch
-from tqdm import tqdm
 from model_1rvq import PromptCondAudioDiffusion
-from diffusers import DDIMScheduler, DDPMScheduler
-import torchaudio
-import librosa
-import os
 import math
 import numpy as np
 from tools.get_1dvae_large import get_model
-import tools.torch_tools as torch_tools
 from safetensors.torch import load_file
 
 class Tango:

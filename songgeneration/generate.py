@@ -1,4 +1,3 @@
-from hmac import new
 import sys
 import os
 import argparse
@@ -11,7 +10,6 @@ import numpy as np
 from omegaconf import OmegaConf
 from codeclm.models import builders
 import gc
-from codeclm.trainer.codec_song_pl import CodecLM_PL
 from codeclm.models import CodecLM
 from third_party.demucs.models.pretrained import get_model_from_yaml
 import re
