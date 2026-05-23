@@ -20,8 +20,20 @@ from typing import Any, List, Mapping, Optional
 
 from transformers import PreTrainedTokenizer, TensorType, is_torch_available
 from transformers.configuration_utils import PretrainedConfig
-from transformers.onnx import OnnxConfigWithPast, PatchingSpec
 from transformers.utils import logging
+
+try:
+    from transformers.onnx import OnnxConfigWithPast, PatchingSpec
+except ImportError:
+    class PatchingSpec:
+        pass
+
+    class OnnxConfigWithPast:
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "transformers.onnx was removed in Transformers 5.x. "
+                "Install optimum for ONNX export support."
+            )
 
 
 logger = logging.get_logger(__name__)

@@ -37,7 +37,7 @@ from transformers.modeling_outputs import (
     SequenceClassifierOutputWithPast,
     TokenClassifierOutput,
 )
-from transformers.modeling_utils import PreTrainedModel, SequenceSummary
+from transformers.modeling_utils import PreTrainedModel
 from transformers.pytorch_utils import Conv1D, find_pruneable_heads_and_indices, prune_conv1d_layer
 from transformers.utils import (
     ModelOutput,
@@ -45,12 +45,61 @@ from transformers.utils import (
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
     is_flash_attn_2_available,
-    is_flash_attn_greater_or_equal_2_10,
     logging,
     replace_return_docstrings,
 )
-from transformers.utils.model_parallel_utils import assert_device_map, get_device_map
 from models_gpt.models.gpt2_config import GPT2Config
+
+try:
+    from transformers.modeling_utils import SequenceSummary
+except ImportError:
+    from transformers.models.gpt2.modeling_gpt2 import GPT2SequenceSummary as SequenceSummary
+
+try:
+    from transformers.utils import is_flash_attn_greater_or_equal_2_10
+except ImportError:
+    from transformers.utils import is_flash_attn_greater_or_equal
+
+    def is_flash_attn_greater_or_equal_2_10():
+        return is_flash_attn_greater_or_equal("2.1.0")
+
+try:
+    from transformers.utils.model_parallel_utils import assert_device_map, get_device_map
+except ImportError:
+    from math import ceil
+
+    def assert_device_map(device_map, num_blocks):
+        blocks = list(range(num_blocks))
+        device_map_blocks = [item for sublist in list(device_map.values()) for item in sublist]
+        duplicate_blocks = []
+        for block in device_map_blocks:
+            if device_map_blocks.count(block) > 1 and block not in duplicate_blocks:
+                duplicate_blocks.append(block)
+
+        missing_blocks = [block for block in blocks if block not in device_map_blocks]
+        extra_blocks = [block for block in device_map_blocks if block not in blocks]
+
+        if duplicate_blocks:
+            raise ValueError(
+                "Duplicate attention blocks specified in device_map. Attention blocks must be specified to one device."
+                " These attention blocks were specified more than once: " + str(duplicate_blocks)
+            )
+        if missing_blocks:
+            raise ValueError(
+                "There are attention blocks for this model that are not specified in the device_map. Add these "
+                "attention blocks to a device on the device_map: " + str(missing_blocks)
+            )
+        if extra_blocks:
+            raise ValueError(
+                "The device_map contains more attention blocks than this model has. Remove these from the device_map:"
+                + str(extra_blocks)
+            )
+
+    def get_device_map(n_layers, devices):
+        layers = list(range(n_layers))
+        n_blocks = int(ceil(n_layers / len(devices)))
+        layers_list = [layers[i : i + n_blocks] for i in range(0, n_layers, n_blocks)]
+        return dict(zip(devices, layers_list))
 
 
 if is_flash_attn_2_available():
