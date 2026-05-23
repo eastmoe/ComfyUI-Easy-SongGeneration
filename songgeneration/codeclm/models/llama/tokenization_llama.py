@@ -26,7 +26,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 import sentencepiece as spm
 
 from transformers.convert_slow_tokenizer import import_protobuf
-from transformers.tokenization_utils import AddedToken, PreTrainedTokenizer
+try:
+    from transformers.tokenization_utils import AddedToken, PreTrainedTokenizer
+except ImportError:
+    from transformers.tokenization_python import PreTrainedTokenizer
+    from transformers.tokenization_utils_base import AddedToken
 from transformers.utils import logging
 
 
