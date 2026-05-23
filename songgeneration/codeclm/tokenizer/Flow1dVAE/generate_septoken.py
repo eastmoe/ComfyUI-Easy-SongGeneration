@@ -18,6 +18,9 @@ class Tango:
         self.sample_rate = 48000
         scheduler_name = "configs/scheduler/stable_diffusion_2.1_largenoise_sample.json"
         self.device = device
+        self.model_path = model_path
+        self.vae_config = vae_config
+        self.vae_model = vae_model
 
         self.vae = get_model(vae_config, vae_model)
         self.vae = self.vae.to(device)
@@ -51,7 +54,6 @@ class Tango:
 
 
     @torch.no_grad()
-    @torch.autocast(device_type="cuda", dtype=torch.float32)
     def sound2code(self, orig_vocal, orig_bgm, batch_size=8):
         if(orig_vocal.ndim == 2):
             audios_vocal = orig_vocal.unsqueeze(0).to(self.device)
@@ -186,7 +188,11 @@ class Tango:
         latent_length = min_samples
         latent_list = []
         spk_embeds = torch.zeros([1, 32, 1, 32], device=codes_vocal.device)
-        with torch.autocast(device_type="cuda", dtype=torch.float16):
+        with torch.autocast(
+            device_type="cuda",
+            dtype=getattr(self, "diffusion_dtype", torch.float16),
+            enabled=getattr(self, "diffusion_dtype", torch.float16) in (torch.float16, torch.bfloat16),
+        ):
             for sinx in range(0, codes_vocal.shape[-1]-hop_samples, hop_samples):
                 codes_vocal_input=codes_vocal[:,:,sinx:sinx+min_samples]
                 codes_bgm_input=codes_bgm[:,:,sinx:sinx+min_samples]
