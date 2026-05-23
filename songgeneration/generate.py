@@ -16,6 +16,39 @@ from third_party.demucs.models.pretrained import get_model_from_yaml
 import re
 
 auto_prompt_type = ['Pop', 'Latin', 'Rock', 'Electronic', 'Metal', 'Country', 'R&B/Soul', 'Ballad', 'Jazz', 'World', 'Hip-Hop', 'Funk', 'Soundtrack','Auto']
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def get_arg(args, name, default=None):
+    return getattr(args, name, default)
+
+
+def prepare_inference_env(args, cfg):
+    if get_arg(args, "gpu_id") is not None:
+        torch.cuda.set_device(int(args.gpu_id))
+    if get_arg(args, "audio_tokenizer_checkpoint"):
+        cfg.audio_tokenizer_checkpoint = args.audio_tokenizer_checkpoint
+    if get_arg(args, "audio_tokenizer_checkpoint_sep"):
+        cfg.audio_tokenizer_checkpoint_sep = args.audio_tokenizer_checkpoint_sep
+    return cfg
+
+
+def resolve_generation_params(args, max_duration, low_mem=False):
+    default_temp = 0.9 if low_mem else 0.8
+    default_top_k = 50 if low_mem else 5000
+    temperature = get_arg(args, "temperature", None)
+    top_k = get_arg(args, "top_k", None)
+    return {
+        "duration": get_arg(args, "duration", None) or max_duration,
+        "extend_stride": get_arg(args, "extend_stride", 5),
+        "temperature": default_temp if temperature is None else temperature,
+        "cfg_coef": get_arg(args, "cfg_coef", 1.5),
+        "top_k": default_top_k if top_k is None else top_k,
+        "top_p": get_arg(args, "top_p", 0.0),
+        "use_sampling": get_arg(args, "use_sampling", True),
+        "record_tokens": get_arg(args, "record_tokens", True),
+        "record_window": get_arg(args, "record_window", 50),
+    }
 
 def check_language_by_text(text):
     chinese_pattern = re.compile(r'[\u4e00-\u9fff]')
@@ -139,16 +172,59 @@ def parse_args():
                       help='Whether to use flash attention (default: False)')
     parser.add_argument('--low_mem', action='store_true',
                       help='Whether to use low memory mode (default: False)')
+    parser.add_argument('--config_path', type=str, default=None,
+                      help='Optional path to config.yaml. Defaults to <ckpt_path>/config.yaml')
+    parser.add_argument('--model_path', type=str, default=None,
+                      help='Optional path to model.pt. Defaults to <ckpt_path>/model.pt')
+    parser.add_argument('--audio_tokenizer_checkpoint', type=str, default=None,
+                      help='Override cfg.audio_tokenizer_checkpoint')
+    parser.add_argument('--audio_tokenizer_checkpoint_sep', type=str, default=None,
+                      help='Override cfg.audio_tokenizer_checkpoint_sep')
+    parser.add_argument('--demucs_model_path', type=str, default=None,
+                      help='Path to Demucs htdemucs.pth used for prompt audio separation')
+    parser.add_argument('--demucs_config_path', type=str, default=None,
+                      help='Path to Demucs htdemucs.yaml used for prompt audio separation')
+    parser.add_argument('--auto_prompt_path', type=str, default=os.path.join(SCRIPT_DIR, 'tools', 'new_auto_prompt.pt'),
+                      help='Path to auto prompt token file')
+    parser.add_argument('--gpu_id', type=int, default=None,
+                      help='CUDA device id to use')
+    parser.add_argument('--duration', type=float, default=None,
+                      help='Generated duration in seconds. Defaults to cfg.max_dur')
+    parser.add_argument('--extend_stride', type=float, default=5,
+                      help='Stride in seconds for generation params')
+    parser.add_argument('--temperature', type=float, default=None,
+                      help='Sampling temperature')
+    parser.add_argument('--cfg_coef', type=float, default=1.5,
+                      help='Classifier-free guidance coefficient')
+    parser.add_argument('--top_k', type=int, default=None,
+                      help='Top-k sampling value')
+    parser.add_argument('--top_p', type=float, default=0.0,
+                      help='Top-p sampling value. 0 disables top-p')
+    parser.add_argument('--no_sampling', dest='use_sampling', action='store_false',
+                      help='Disable sampling and use greedy decoding')
+    parser.set_defaults(use_sampling=True)
+    parser.add_argument('--record_tokens', dest='record_tokens', action='store_true',
+                      help='Enable token recording during generation')
+    parser.add_argument('--no_record_tokens', dest='record_tokens', action='store_false',
+                      help='Disable token recording during generation')
+    parser.set_defaults(record_tokens=True)
+    parser.add_argument('--record_window', type=int, default=50,
+                      help='Token recording window size')
+    parser.add_argument('--chunk_size', type=int, default=128,
+                      help='Chunk size for diffusion audio decoding')
     return parser.parse_args()
 
 def generate(args, version = 'v1'):
     torch.set_num_threads(1)
-    ckpt_path = args.ckpt_path
+    if get_arg(args, "gpu_id") is not None:
+        torch.cuda.set_device(int(args.gpu_id))
+    ckpt_dir = args.ckpt_path
     input_jsonl = args.input_jsonl
     save_dir = args.save_dir
-    cfg_path = os.path.join(ckpt_path, 'config.yaml')
-    ckpt_path = os.path.join(ckpt_path, 'model.pt')
+    cfg_path = get_arg(args, "config_path") or os.path.join(ckpt_dir, 'config.yaml')
+    ckpt_path = get_arg(args, "model_path") or os.path.join(ckpt_dir, 'model.pt')
     cfg = OmegaConf.load(cfg_path)
+    cfg = prepare_inference_env(args, cfg)
     cfg.lm.use_flash_attn_2 = args.use_flash_attn
     print(f"use_flash_attn: {args.use_flash_attn}")
     cfg.mode = 'inference'
@@ -156,8 +232,10 @@ def generate(args, version = 'v1'):
     gen_type = args.generate_type
     
 
-    separator = Separator()
-    auto_prompt = torch.load('tools/new_auto_prompt.pt')
+    demucs_model_path = get_arg(args, "demucs_model_path") or os.path.join(SCRIPT_DIR, 'third_party', 'demucs', 'ckpt', 'htdemucs.pth')
+    demucs_config_path = get_arg(args, "demucs_config_path") or os.path.join(SCRIPT_DIR, 'third_party', 'demucs', 'ckpt', 'htdemucs.yaml')
+    separator = Separator(demucs_model_path, demucs_config_path, gpu_id=get_arg(args, "gpu_id", 0) or 0)
+    auto_prompt = torch.load(get_arg(args, "auto_prompt_path", os.path.join(SCRIPT_DIR, 'tools', 'new_auto_prompt.pt')))
     audio_tokenizer = builders.get_audio_tokenizer_model(cfg.audio_tokenizer_checkpoint, cfg)
     audio_tokenizer = audio_tokenizer.eval().cuda()
     with open(input_jsonl, "r") as fp:
@@ -260,15 +338,8 @@ def generate(args, version = 'v1'):
         seperate_tokenizer = seperate_tokenizer,
     )
 
-    cfg_coef = 1.5 #25
-    temp = 0.8
-    top_k = 5000
-    top_p = 0.0
-    record_tokens = True
-    record_window = 50
-
-    model.set_generation_params(duration=max_duration, extend_stride=5, temperature=temp, cfg_coef=cfg_coef,
-                                top_k=top_k, top_p=top_p, record_tokens=record_tokens, record_window=record_window)
+    gen_params = resolve_generation_params(args, max_duration, low_mem=False)
+    model.set_generation_params(**gen_params)
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(save_dir + "/audios", exist_ok=True)
     os.makedirs(save_dir + "/jsonl", exist_ok=True)
@@ -307,23 +378,23 @@ def generate(args, version = 'v1'):
         with torch.no_grad():
             if 'raw_pmt_wav' in item:
                 if gen_type == 'separate':
-                    wav_seperate = model.generate_audio(tokens, item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'], chunked=True, gen_type='mixed')
-                    wav_vocal = model.generate_audio(tokens, item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'], chunked=True, gen_type='vocal')
-                    wav_bgm = model.generate_audio(tokens, item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'], chunked=True, gen_type='bgm')
+                    wav_seperate = model.generate_audio(tokens, item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='mixed')
+                    wav_vocal = model.generate_audio(tokens, item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='vocal')
+                    wav_bgm = model.generate_audio(tokens, item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='bgm')
                 elif gen_type == 'mixed':
-                    wav_seperate = model.generate_audio(tokens, item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'],chunked=True, gen_type=gen_type)
+                    wav_seperate = model.generate_audio(tokens, item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type=gen_type)
                 else:
-                    wav_seperate = model.generate_audio(tokens,chunked=True, gen_type=gen_type)
+                    wav_seperate = model.generate_audio(tokens, chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type=gen_type)
                 del item['raw_pmt_wav']
                 del item['raw_vocal_wav']
                 del item['raw_bgm_wav']
             else:
                 if gen_type == 'separate':
-                    wav_vocal = model.generate_audio(tokens, chunked=True, gen_type='vocal')
-                    wav_bgm = model.generate_audio(tokens, chunked=True, gen_type='bgm')
-                    wav_seperate = model.generate_audio(tokens, chunked=True, gen_type='mixed')
+                    wav_vocal = model.generate_audio(tokens, chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='vocal')
+                    wav_bgm = model.generate_audio(tokens, chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='bgm')
+                    wav_seperate = model.generate_audio(tokens, chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='mixed')
                 else:
-                    wav_seperate = model.generate_audio(tokens, chunked=True, gen_type=gen_type)
+                    wav_seperate = model.generate_audio(tokens, chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type=gen_type)
         del item['pmt_wav']
         del item['vocal_wav']
         del item['bgm_wav']
@@ -340,19 +411,22 @@ def generate(args, version = 'v1'):
         item["idx"] = f"{item['idx']}"
         item["wav_path"] = target_wav_name
     
-    src_jsonl_name = os.path.split(input_jsonl)[-1]
+    src_jsonl_name = os.path.splitext(os.path.split(input_jsonl)[-1])[0]
     with open(f"{save_dir}/jsonl/{src_jsonl_name}.jsonl", "w", encoding='utf-8') as fw:
         for item in new_items:
             fw.writelines(json.dumps(item, ensure_ascii=False)+"\n")
 
 def generate_lowmem(args, version = 'v1'):
     torch.set_num_threads(1)
-    ckpt_path = args.ckpt_path
+    if get_arg(args, "gpu_id") is not None:
+        torch.cuda.set_device(int(args.gpu_id))
+    ckpt_dir = args.ckpt_path
     input_jsonl = args.input_jsonl
     save_dir = args.save_dir
-    cfg_path = os.path.join(ckpt_path, 'config.yaml')
-    ckpt_path = os.path.join(ckpt_path, 'model.pt')
+    cfg_path = get_arg(args, "config_path") or os.path.join(ckpt_dir, 'config.yaml')
+    ckpt_path = get_arg(args, "model_path") or os.path.join(ckpt_dir, 'model.pt')
     cfg = OmegaConf.load(cfg_path)
+    cfg = prepare_inference_env(args, cfg)
     cfg.lm.use_flash_attn_2 = args.use_flash_attn
     print(f"use_flash_attn: {args.use_flash_attn}")
     cfg.mode = 'inference'
@@ -368,10 +442,12 @@ def generate_lowmem(args, version = 'v1'):
             use_audio_tokenizer = True
             break
     if use_audio_tokenizer:
-        separator = Separator()
+        demucs_model_path = get_arg(args, "demucs_model_path") or os.path.join(SCRIPT_DIR, 'third_party', 'demucs', 'ckpt', 'htdemucs.pth')
+        demucs_config_path = get_arg(args, "demucs_config_path") or os.path.join(SCRIPT_DIR, 'third_party', 'demucs', 'ckpt', 'htdemucs.yaml')
+        separator = Separator(demucs_model_path, demucs_config_path, gpu_id=get_arg(args, "gpu_id", 0) or 0)
         audio_tokenizer = builders.get_audio_tokenizer_model(cfg.audio_tokenizer_checkpoint, cfg)
         audio_tokenizer = audio_tokenizer.eval().cuda()
-    auto_prompt = torch.load('tools/new_auto_prompt.pt')
+    auto_prompt = torch.load(get_arg(args, "auto_prompt_path", os.path.join(SCRIPT_DIR, 'tools', 'new_auto_prompt.pt')))
     new_items = []
     for line in lines:
         item = json.loads(line)
@@ -465,6 +541,7 @@ def generate_lowmem(args, version = 'v1'):
 
     offload_audiolm = True if 'offload' in cfg.keys() and 'audiolm' in cfg.offload else False
     if offload_audiolm:
+        from codeclm.utils.offload_profiler import OffloadProfiler, OffloadParamParse
         audiolm_offload_param = OffloadParamParse.parse_config(audiolm, cfg.offload.audiolm)
         audiolm_offload_param.show()
         offload_profiler = OffloadProfiler(device_index=0, **(audiolm_offload_param.init_param_dict()))
@@ -480,16 +557,8 @@ def generate_lowmem(args, version = 'v1'):
         seperate_tokenizer = None,
     )
     
-    cfg_coef = 1.5 #25
-    temp = 0.9
-    top_k = 50
-    top_p = 0.0
-    record_tokens = True
-    record_window = 50
-    
-
-    model.set_generation_params(duration=max_duration, extend_stride=5, temperature=temp, cfg_coef=cfg_coef,
-                                top_k=top_k, top_p=top_p, record_tokens=record_tokens, record_window=record_window)
+    gen_params = resolve_generation_params(args, max_duration, low_mem=True)
+    model.set_generation_params(**gen_params)
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(save_dir + "/audios", exist_ok=True)
     os.makedirs(save_dir + "/jsonl", exist_ok=True)
@@ -564,23 +633,23 @@ def generate_lowmem(args, version = 'v1'):
         with torch.no_grad():
             if 'raw_pmt_wav' in item:
                 if gen_type == 'separate':
-                    wav_seperate = model.generate_audio(item['tokens'], item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'],chunked=True, gen_type='mixed')
-                    wav_vocal = model.generate_audio(item['tokens'],chunked=True, gen_type='vocal')
-                    wav_bgm = model.generate_audio(item['tokens'], chunked=True, gen_type='bgm')
+                    wav_seperate = model.generate_audio(item['tokens'], item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='mixed')
+                    wav_vocal = model.generate_audio(item['tokens'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='vocal')
+                    wav_bgm = model.generate_audio(item['tokens'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='bgm')
                 elif gen_type == 'mixed':
-                    wav_seperate = model.generate_audio(item['tokens'], item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'],chunked=True, gen_type=gen_type)
+                    wav_seperate = model.generate_audio(item['tokens'], item['raw_pmt_wav'], item['raw_vocal_wav'], item['raw_bgm_wav'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type=gen_type)
                 else:
-                    wav_seperate = model.generate_audio(item['tokens'], chunked=True, gen_type=gen_type)
+                    wav_seperate = model.generate_audio(item['tokens'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type=gen_type)
                 del item['raw_pmt_wav']
                 del item['raw_vocal_wav']
                 del item['raw_bgm_wav']
             else:
                 if gen_type == 'separate':
-                    wav_vocal = model.generate_audio(item['tokens'], chunked=True, gen_type='vocal')
-                    wav_bgm = model.generate_audio(item['tokens'], chunked=True, gen_type='bgm')
-                    wav_seperate = model.generate_audio(item['tokens'], chunked=True, gen_type='mixed')
+                    wav_vocal = model.generate_audio(item['tokens'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='vocal')
+                    wav_bgm = model.generate_audio(item['tokens'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='bgm')
+                    wav_seperate = model.generate_audio(item['tokens'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type='mixed')
                 else:
-                    wav_seperate = model.generate_audio(item['tokens'], chunked=True, gen_type=gen_type)
+                    wav_seperate = model.generate_audio(item['tokens'], chunked=True, chunk_size=get_arg(args, "chunk_size", 128), gen_type=gen_type)
         if gen_type == 'separate':
             save_pcm_wav(item['wav_path'].replace('.wav', '_vocal.wav'), wav_vocal[0], cfg.sample_rate)
             save_pcm_wav(item['wav_path'].replace('.wav', '_bgm.wav'), wav_bgm[0], cfg.sample_rate)
@@ -598,7 +667,7 @@ def generate_lowmem(args, version = 'v1'):
     if offload_wav_tokenizer_diffusion:
         sep_offload_profiler.stop()
     torch.cuda.empty_cache()
-    src_jsonl_name = os.path.split(input_jsonl)[-1]
+    src_jsonl_name = os.path.splitext(os.path.split(input_jsonl)[-1])[0]
     with open(f"{save_dir}/jsonl/{src_jsonl_name}.jsonl", "w", encoding='utf-8') as fw:
         for item in new_items:
             fw.writelines(json.dumps(item, ensure_ascii=False)+"\n")
@@ -614,13 +683,15 @@ if __name__ == "__main__":
     # 解析命令行参数
     args = parse_args()
     if torch.cuda.is_available():
+        if args.gpu_id is not None:
+            torch.cuda.set_device(int(args.gpu_id))
         device = torch.cuda.current_device()
         reserved = torch.cuda.memory_reserved(device)
         total = torch.cuda.get_device_properties(device).total_memory
         res_mem = (total - reserved) / 1024 / 1024 / 1024
         print(f"reserved memory: {res_mem}GB")
 
-        model_name = args.ckpt_path.split("/")[-1].lower().replace('-', '_')
+        model_name = os.path.basename(os.path.normpath(args.ckpt_path)).lower().replace('-', '_')
         if model_name == 'songgeneration_base' or model_name == 'songgeneration_base_new' or model_name == 'songgeneration_base_full':
             if res_mem > 24 and not args.low_mem:
                 print("use generate")

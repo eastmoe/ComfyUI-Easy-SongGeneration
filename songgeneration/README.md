@@ -127,13 +127,27 @@ To ensure the model runs correctly, **please download all the required folders**
   huggingface-cli download lglg666/SongGeneration-v2-large --local-dir ./songgeneration_v2_large
   ```
 
-Once everything is set up, you can run the inference script using the following command:
+Once everything is set up, you can run inference with the new CLI:
 
 ```bash
-sh generate.sh ckpt_path lyrics.jsonl output_path
+python inference.py \
+  --ckpt-path ckpt_path \
+  --input-jsonl lyrics.jsonl \
+  --save-dir output_path
 ```
 
-- You may provides sample inputs in JSON Lines (`.jsonl`) format. Each line represents an individual song generation request. The model expects each input to contain the following fields:
+You can also run a single request directly from command-line arguments:
+
+```bash
+python inference.py \
+  --ckpt-path songgeneration_v2_large \
+  --lyrics "[intro-short] ; [verse] Stars are waking in the rain. Hearts are glowing through the pain. ; [chorus] We sing until the morning light. We burn across the quiet night. ; [outro-short]" \
+  --descriptions "female, pop, energetic, piano, drum kit" \
+  --auto-prompt-audio-type Auto \
+  --output-audio sample/output/song_001.wav
+```
+
+- You may provide sample inputs in JSON Lines (`.jsonl`) format. Each line represents an individual song generation request. The model expects each input to contain the following fields:
 
   - `idx`: A unique identifier for the output song. It will be used as the name of the generated audio file.
   - `gt_lyric`:The lyrics to be used in generation. It must follow the format of `[Structure] Text`, where `Structure` defines the musical section (e.g., `[Verse]`, `[Chorus]`). See [Input Guide](#Input-Guide).
@@ -144,27 +158,60 @@ sh generate.sh ckpt_path lyrics.jsonl output_path
     - `'Pop'`, `'Latin'`, `'Rock'`, `'Electronic'`, `'Metal'`, `'Country'`,`'R&B/Soul'`, `'Ballad'`, `'Jazz'`, `'World'`, `'Hip-Hop'`,`'Funk'`,`'Soundtrack'`, `'Auto'`.
   - **Note:** If certain optional fields are not required, they can be omitted. 
 
-- Outputs of the loader `output_path`:
+- Outputs under `output_path`:
 
-  - `audio`: generated audio files
+  - `audios`: generated audio files
   - `jsonl`: output jsonls
 
 - An example command may look like:
 
   ```bash
-  sh generate.sh songgeneration_base sample/lyrics.jsonl sample/output
+  python inference.py --ckpt-path songgeneration_base --input-jsonl sample/lyrics.jsonl --save-dir sample/output
   ```
 
-If you encounter **out-of-memory (OOM**) issues, you can manually enable low-memory inference mode using the `--low_mem` flag. For example:
+The previous shell wrapper is still available:
 
 ```bash
-sh generate.sh ckpt_path lyrics.jsonl output_path --low_mem
+sh generate.sh ckpt_path lyrics.jsonl output_path
+```
+
+### CLI Arguments
+
+`inference.py` supports both kebab-case and the original underscore-style option names for most arguments.
+
+| Argument | Description |
+| --- | --- |
+| `--ckpt-path` | Checkpoint directory containing `config.yaml` and `model.pt`. |
+| `--config-path`, `--model-path` | Override the config or model file path when they are not under `--ckpt-path`. |
+| `--input-jsonl` | Batch input file. If omitted, use `--lyrics` for single-request mode. |
+| `--lyrics`, `--descriptions`, `--idx` | Single-request lyrics, text prompt tags, and output id. |
+| `--prompt-audio-path` | Optional 10-second reference audio. Do not combine with `--auto-prompt-audio-type`. |
+| `--auto-prompt-audio-type` | Optional built-in style prompt: `Pop`, `Latin`, `Rock`, `Electronic`, `Metal`, `Country`, `R&B/Soul`, `Ballad`, `Jazz`, `World`, `Hip-Hop`, `Funk`, `Soundtrack`, `Auto`. |
+| `--save-dir` | Output directory. Generated files are written to `audios/` and metadata to `jsonl/`. |
+| `--output-audio` | Single-request exact output WAV path. With `--generate-type separate`, `_vocal.wav` and `_bgm.wav` are also copied next to it. |
+| `--output-jsonl` | Optional exact path for copied result metadata. |
+| `--audio-tokenizer-checkpoint`, `--audio-tokenizer-checkpoint-sep` | Override tokenizer checkpoint paths from config. |
+| `--demucs-model-path`, `--demucs-config-path` | Override Demucs paths used for prompt-audio source separation. |
+| `--auto-prompt-path` | Override `tools/new_auto_prompt.pt`. |
+| `--version` | `auto`, `v1`, or `v2`. `auto` infers formatting from the checkpoint folder name. |
+| `--gpu-id` | CUDA device id. |
+| `--seed` | Random seed for reproducible auto prompt selection and sampling. |
+| `--duration` | Generation duration in seconds. Defaults to `max_dur` in the config. |
+| `--extend-stride` | Generation stride in seconds. Defaults to `5`. |
+| `--temperature`, `--cfg-coef`, `--top-k`, `--top-p`, `--no-sampling` | Sampling and guidance controls. |
+| `--chunk-size` | Diffusion decoding chunk size. Defaults to `128`. |
+| `--audio-format` | Output format. Currently only `wav` is supported. |
+
+If you encounter **out-of-memory (OOM)** issues, you can manually enable low-memory inference mode using the `--low-mem` flag. For example:
+
+```bash
+python inference.py --ckpt-path ckpt_path --input-jsonl lyrics.jsonl --save-dir output_path --low-mem
 ```
 
 If your GPU device does **not support Flash Attention** or your environment does **not have Flash Attention installed**, you can disable it by adding the `--not_use_flash_attn` flag. For example:
 
 ```bash
-sh generate.sh ckpt_path lyrics.jsonl output_path --not_use_flash_attn
+python inference.py --ckpt-path ckpt_path --input-jsonl lyrics.jsonl --save-dir output_path --not-use-flash-attn
 ```
 
 By default, the model generates **songs with both vocals and accompaniment**. If you want to generate **pure music**, **pure vocals**, or **separated vocal and accompaniment tracks**, please use the following flags:
@@ -176,7 +223,7 @@ By default, the model generates **songs with both vocals and accompaniment**. If
 For example:
 
 ```bash
-sh generate.sh ckpt_path lyrics.jsonl output_path --separate
+python inference.py --ckpt-path ckpt_path --input-jsonl lyrics.jsonl --save-dir output_path --generate-type separate
 ```
 
 ## Input Guide
