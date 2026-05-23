@@ -1,6 +1,6 @@
 # ComfyUI Easy SongGeneration
 
-`ComfyUI-Easy-SongGeneration` 是一个面向 ComfyUI 的 SongGeneration 推理插件。它把仓库内精简后的 `songgeneration` 推理代码封装为 ComfyUI 自定义节点，可以在工作流中加载 SongGeneration 检查点，并输出 ComfyUI 原生 `AUDIO`，用于连接 `Preview Audio`、`Save Audio` 或其他音频节点。
+`ComfyUI-Easy-SongGeneration` 是一个面向 ComfyUI 的 SongGeneration 推理插件。它把仓库内精简后的 `songgeneration` 推理代码封装为 ComfyUI 自定义节点，可以在工作流中加载并推理 SongGeneration Checkpoint。
 
 本插件侧重本地推理与 ComfyUI 工作流集成：去除了上游项目中训练、评估、微调和 Gradio GUI 相关内容，保留核心推理链路，并加入模型缓存、显存释放、分段加载、量化缓存、进度条和中文节点翻译。
 
@@ -25,7 +25,7 @@ git clone https://github.com/eastmoe/ComfyUI-Easy-SongGeneration.git
 
 然后重启 ComfyUI。
 
-本仓库已经把多个上游运行时依赖替换为本地轻量实现，`songgeneration/requirements.txt` 中主要保留依赖说明。通常不需要额外安装大量上游依赖；如果你的 ComfyUI 环境缺少基础依赖，请优先按 ComfyUI 当前环境的 PyTorch/CUDA/HIP 版本补齐，避免覆盖已有的 GPU 版 PyTorch。
+本仓库已经把多个上游运行时依赖替换为本地轻量实现，`songgeneration/requirements.txt` 中主要保留依赖说明。不需要额外安装大量上游依赖；如果你的 ComfyUI 环境缺少基础依赖，请按 ComfyUI 当前环境的 PyTorch/CUDA/HIP 版本补齐。
 
 ## 模型放置
 
@@ -91,7 +91,7 @@ songgeneration/tools/new_auto_prompt.pt
 
 ## 包含节点
 
-节点分类默认为 `eastmoe/Comfy-Easy-SongGeneration`，中文界面下显示为：
+节点分类默认为 `eastmoe/Comfy-Easy-SongGeneration`，以下是当前版本节点列表：
 
 | 节点 | 作用 |
 | --- | --- |
@@ -134,9 +134,7 @@ songgeneration/tools/new_auto_prompt.pt
 
 ## 对原项目的改造
 
-以下整理自当前仓库的 git commit 记录：
-
-- 初始化引入上游 SongGeneration 代码。
+- 初始化时引入上游 SongGeneration 代码。
 - 移除训练、评估、微调相关代码和依赖，仅保留核心推理功能。
 - 移除 Gradio/GUI 推理代码与相关依赖，转为保留命令行推理入口。
 - 放宽部分依赖版本限制，减少与 ComfyUI 现有 Python 环境的冲突。
@@ -150,7 +148,7 @@ songgeneration/tools/new_auto_prompt.pt
   - `diffusers` 替换为 Flow1dVAE 内本地兼容子集。
   - `omegaconf` 替换为静态配置读取所需的本地兼容实现。
   - 移除未直接使用的 `openunmix`、`huggingface-hub`、`x-transformers`、`packaging`、`librosa`、`lameenc` 等依赖。
-- 新增功能完整的推理 CLI，作为 ComfyUI 节点化之前的本地推理入口。
+- 新增功能完整的推理 CLI，作为 可用于测试的本地推理入口。
 - 新增 ComfyUI 节点实现，支持模型加载、模型释放、混音/人声/伴奏/分轨输出，并返回 ComfyUI 原生 `AUDIO`。
 - 新增 Linear 权重量化、量化缓存、LLM/Diffusion/VAE 精度选择和分段加载，改善显存占用与加载体验。
 - 新增 ComfyUI 右键菜单适配、中文节点翻译、加载与生成进度条，并支持 ComfyUI 中断回调。
