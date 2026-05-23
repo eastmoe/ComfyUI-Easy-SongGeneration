@@ -9,10 +9,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
 
-from diffusers.utils.torch_utils import randn_tensor
 from transformers import HubertModel
 from libs.rvq.descript_quantize3 import ResidualVectorQuantize
 
+from models_gpt.models.diffusers_compat import randn_tensor
 from models_gpt.models.gpt2_rope2_time_new_correct_mask_noncasual_reflow import GPT2Model
 from models_gpt.models.gpt2_config import GPT2Config
 from our_MERT_BESTRQ.mert_fairseq.models.musicfm.musicfm_model import MusicFMModel, MusicFMConfig
