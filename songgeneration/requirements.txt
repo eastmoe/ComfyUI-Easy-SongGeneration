@@ -17,8 +17,8 @@
 # vector-quantize-pytorch>=1.22.17  # replaced by Flow1dVAE/libs/rvq/descript_quantize3.py local RVQ implementation
 
 diffusers>=0.37.1,<0.38
-huggingface-hub>=0.34.0,<2.0
-openunmix>=1.3.0
+# huggingface-hub>=0.34.0,<2.0 # requied by transformers
+# openunmix>=1.3.0 # no import directly
 
 # lameenc>=1.8.1  # not needed: inference outputs PCM WAV through the stdlib wave module, not MP3
 # librosa>=0.11.0  # replaced by torchaudio.load/resample plus a stdlib PCM WAV fallback
