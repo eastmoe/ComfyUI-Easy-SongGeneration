@@ -1,0 +1,289 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from .config import (
+    AUTO_PROMPT_TYPES,
+    CATEGORY,
+    SONGGEN_MODEL_TYPE,
+    _DTYPE_CHOICES,
+    _QUANTIZATION_CHOICES,
+    _QUANTIZATION_TARGETS,
+    _songgen_cache_root,
+    _tr_mapping,
+    _tr_names,
+    _tr_text,
+    _ui,
+)
+from .model import _load_model
+from .options import GenerationOptions
+from .runtime import _model_choices, _to_comfy_audio
+
+def _base_inputs() -> dict[str, Any]:
+    return {
+        "songgen_model": (SONGGEN_MODEL_TYPE, _ui("模型", "SongGeneration 模型加载节点输出。")),
+        "lyrics": (
+            "STRING",
+            _ui("歌词", "SongGeneration 段落格式歌词，例如 [verse] ... ; [chorus] ...。", multiline=True),
+        ),
+        "descriptions": (
+            "STRING",
+            _ui("描述", "风格、情绪、乐器、人声等逗号分隔提示词。", multiline=True, default="female, pop, energetic, piano, drum kit"),
+        ),
+        "seed": ("INT", _ui("种子", "-1 使用当前时间。", default=-1, min=-1, max=2**31 - 1)),
+        "duration": ("FLOAT", _ui("时长", "0 使用模型 config.yaml 的 max_dur。", default=0.0, min=0.0, max=270.0, step=1.0)),
+        "extend_stride": ("FLOAT", _ui("扩展步长", "长音频生成步长，通常保持 5。", default=5.0, min=1.0, max=60.0, step=1.0)),
+        "temperature": ("FLOAT", _ui("温度", "0 使用原推理默认值。", default=0.0, min=0.0, max=2.0, step=0.05)),
+        "cfg_coef": ("FLOAT", _ui("CFG", "Classifier-free guidance 系数。", default=1.5, min=0.0, max=10.0, step=0.1)),
+        "top_k": ("INT", _ui("Top K", "0 使用原推理默认值。", default=0, min=0, max=10000)),
+        "top_p": ("FLOAT", _ui("Top P", "0 关闭 top-p。", default=0.0, min=0.0, max=1.0, step=0.01)),
+        "use_sampling": ("BOOLEAN", _ui("采样", "关闭后使用 greedy decoding。", default=True)),
+        "record_tokens": ("BOOLEAN", _ui("记录 Tokens", "保持与原推理脚本一致。", default=True)),
+        "record_window": ("INT", _ui("Token 窗口", "Token recording window。", default=50, min=1, max=1000)),
+        "chunk_size": ("INT", _ui("解码块大小", "Diffusion decoding chunk size。", default=128, min=16, max=1024, step=16)),
+    }
+
+
+def _options_from_kwargs(generate_type: str, auto_prompt_audio_type: str, prompt_audio: Any, kwargs: dict[str, Any]) -> GenerationOptions:
+    return GenerationOptions(
+        lyrics=kwargs["lyrics"],
+        descriptions=kwargs.get("descriptions") or "",
+        generate_type=generate_type,
+        auto_prompt_audio_type=auto_prompt_audio_type,
+        prompt_audio=prompt_audio,
+        prompt_audio_batch_index=int(kwargs.get("prompt_audio_batch_index", 0)),
+        seed=int(kwargs.get("seed", -1)),
+        duration=float(kwargs.get("duration", 0.0)),
+        extend_stride=float(kwargs.get("extend_stride", 5.0)),
+        temperature=float(kwargs.get("temperature", 0.0)),
+        cfg_coef=float(kwargs.get("cfg_coef", 1.5)),
+        top_k=int(kwargs.get("top_k", 0)),
+        top_p=float(kwargs.get("top_p", 0.0)),
+        use_sampling=bool(kwargs.get("use_sampling", True)),
+        record_tokens=bool(kwargs.get("record_tokens", True)),
+        record_window=int(kwargs.get("record_window", 50)),
+        chunk_size=int(kwargs.get("chunk_size", 128)),
+    )
+
+
+class SongGenerationLoadModel:
+    CATEGORY = CATEGORY
+    RETURN_TYPES = (SONGGEN_MODEL_TYPE, "STRING")
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationLoadModel", ("songgen_model", "info"))
+    FUNCTION = "load"
+    DESCRIPTION = _tr_text(
+        "descriptions.EasySongGenerationLoadModel",
+        "Load a SongGeneration checkpoint from ComfyUI/models/SongGeneration.",
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": (_model_choices(), _ui("模型目录", "包含 config.yaml 和 model.pt 的模型子文件夹。")),
+                "version": (["auto", "v2", "v1"], _ui("版本", "auto 会根据模型目录名推断 v1/v2。")),
+                "runtime_root": (
+                    "STRING",
+                    _ui("运行时根目录", "auto 会搜索模型目录、ComfyUI/models/SongGeneration 和插件目录。", default="auto"),
+                ),
+                "gpu_id": ("INT", _ui("GPU ID", "-1 使用当前 CUDA 设备。", default=-1, min=-1, max=16)),
+                "use_flash_attn": ("BOOLEAN", _ui("Flash Attention", "环境支持时可开启。", default=True)),
+                "segmented_load": ("BOOLEAN", _ui("分段加载", "按模块分段加载/移动权重，减少加载时显存峰值。", default=True)),
+                "quantization": (
+                    _QUANTIZATION_CHOICES,
+                    _ui("量化格式", "Linear 权重量化格式；none 表示不量化。缓存位于 ComfyUI/models/SongGeneration-cache。"),
+                ),
+                "quantization_target": (
+                    _QUANTIZATION_TARGETS,
+                    _ui("量化范围", "选择要量化的模块。VAE 量化可能影响音质或兼容性。"),
+                ),
+                "rebuild_quantization_cache": (
+                    "BOOLEAN",
+                    _ui("重建量化缓存", "忽略已有量化缓存并重新生成。", default=False),
+                ),
+                "llm_precision": (_DTYPE_CHOICES, _ui("LLM 精度", "LLM 推理/权重计算精度。", default="float16")),
+                "diffusion_precision": (_DTYPE_CHOICES, _ui("Diffusion 精度", "音频 Diffusion 解码模型计算精度。", default="float16")),
+                "vae_precision": (_DTYPE_CHOICES, _ui("VAE 精度", "音频 VAE 编解码计算精度。", default="float32")),
+                "reload_model": ("BOOLEAN", _ui("重新加载", "忽略缓存并重新加载权重。", default=False)),
+            }
+        }
+
+    def load(
+        self,
+        model,
+        version,
+        runtime_root,
+        gpu_id,
+        use_flash_attn,
+        segmented_load,
+        quantization,
+        quantization_target,
+        rebuild_quantization_cache,
+        llm_precision,
+        diffusion_precision,
+        vae_precision,
+        reload_model,
+    ):
+        handle = _load_model(
+            model,
+            version,
+            runtime_root,
+            gpu_id,
+            use_flash_attn,
+            reload_model,
+            segmented_load,
+            quantization,
+            quantization_target,
+            rebuild_quantization_cache,
+            llm_precision,
+            diffusion_precision,
+            vae_precision,
+        )
+        info = {
+            "model": handle.model_dir.name,
+            "path": str(handle.model_dir),
+            "version": handle.version,
+            "sample_rate": handle.sample_rate,
+            "segmented_load": handle.segmented_load,
+            "quantization": handle.quantization,
+            "quantization_target": handle.quantization_target,
+            "cache_dir": str(_songgen_cache_root()),
+            "llm_precision": str(handle.llm_dtype).replace("torch.", ""),
+            "diffusion_precision": str(handle.diffusion_dtype).replace("torch.", ""),
+            "vae_precision": str(handle.vae_dtype).replace("torch.", ""),
+            "quantization_info": handle.quantization_info,
+        }
+        return (handle, json.dumps(info, ensure_ascii=False, indent=2))
+
+
+class SongGenerationReleaseModel:
+    CATEGORY = CATEGORY
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationReleaseModel", ("status",))
+    FUNCTION = "release"
+    DESCRIPTION = _tr_text(
+        "descriptions.EasySongGenerationReleaseModel",
+        "Release a loaded SongGeneration model and clear CUDA cache.",
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "songgen_model": (SONGGEN_MODEL_TYPE, _ui("模型", "要释放的 SongGeneration 模型。")),
+                "clear_cuda_cache": ("BOOLEAN", _ui("清理显存缓存", "释放后调用 torch.cuda.empty_cache。", default=True)),
+            }
+        }
+
+    def release(self, songgen_model, clear_cuda_cache):
+        return (songgen_model.release(clear_cuda_cache=bool(clear_cuda_cache)),)
+
+
+class _GenerateOneBase:
+    CATEGORY = CATEGORY
+    RETURN_TYPES = ("AUDIO", "STRING")
+    RETURN_NAMES = ("audio", "metadata")
+    FUNCTION = "generate"
+    GENERATE_TYPE = "mixed"
+    DESCRIPTION = "Generate SongGeneration audio as a ComfyUI AUDIO object."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                **_base_inputs(),
+                "auto_prompt_audio_type": (AUTO_PROMPT_TYPES, _ui("自动参考风格", "None 表示不使用自动参考音频。")),
+            },
+            "optional": {
+                "prompt_audio": ("AUDIO", _ui("参考音频", "可选 ComfyUI AUDIO，会优先于自动参考风格。")),
+                "prompt_audio_batch_index": (
+                    "INT",
+                    _ui("音频批次", "当 AUDIO 包含 batch 时选择其中一条。", default=0, min=0, max=4096),
+                ),
+            },
+        }
+
+    def generate(self, songgen_model, auto_prompt_audio_type="None", prompt_audio=None, **kwargs):
+        options = _options_from_kwargs(self.GENERATE_TYPE, auto_prompt_audio_type, prompt_audio, kwargs)
+        result = songgen_model.generate(options)
+        metadata = json.dumps(result["metadata"], ensure_ascii=False, indent=2)
+        return (_to_comfy_audio(result["mixed"][0], songgen_model.sample_rate), metadata)
+
+
+class SongGenerationGenerateMixed(_GenerateOneBase):
+    GENERATE_TYPE = "mixed"
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationGenerateMixed", ("audio", "metadata"))
+    DESCRIPTION = _tr_text(
+        "descriptions.EasySongGenerationGenerateMixed",
+        "Generate a full mixed song with vocals and accompaniment.",
+    )
+
+
+class SongGenerationGenerateVocal(_GenerateOneBase):
+    GENERATE_TYPE = "vocal"
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationGenerateVocal", ("audio", "metadata"))
+    DESCRIPTION = _tr_text("descriptions.EasySongGenerationGenerateVocal", "Generate vocal-only audio.")
+
+
+class SongGenerationGenerateBGM(_GenerateOneBase):
+    GENERATE_TYPE = "bgm"
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationGenerateBGM", ("audio", "metadata"))
+    DESCRIPTION = _tr_text("descriptions.EasySongGenerationGenerateBGM", "Generate accompaniment / pure music audio.")
+
+
+class SongGenerationGenerateSeparate:
+    CATEGORY = CATEGORY
+    RETURN_TYPES = ("AUDIO", "AUDIO", "AUDIO", "STRING")
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationGenerateSeparate", ("mixed", "vocal", "bgm", "metadata"))
+    FUNCTION = "generate"
+    DESCRIPTION = _tr_text(
+        "descriptions.EasySongGenerationGenerateSeparate",
+        "Generate mixed, vocal-only, and accompaniment tracks.",
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                **_base_inputs(),
+                "auto_prompt_audio_type": (AUTO_PROMPT_TYPES, _ui("自动参考风格", "None 表示不使用自动参考音频。")),
+            },
+            "optional": {
+                "prompt_audio": ("AUDIO", _ui("参考音频", "可选 ComfyUI AUDIO，会优先于自动参考风格。")),
+                "prompt_audio_batch_index": (
+                    "INT",
+                    _ui("音频批次", "当 AUDIO 包含 batch 时选择其中一条。", default=0, min=0, max=4096),
+                ),
+            },
+        }
+
+    def generate(self, songgen_model, auto_prompt_audio_type="None", prompt_audio=None, **kwargs):
+        options = _options_from_kwargs("separate", auto_prompt_audio_type, prompt_audio, kwargs)
+        result = songgen_model.generate(options)
+        metadata = json.dumps(result["metadata"], ensure_ascii=False, indent=2)
+        return (
+            _to_comfy_audio(result["mixed"][0], songgen_model.sample_rate),
+            _to_comfy_audio(result["vocal"][0], songgen_model.sample_rate),
+            _to_comfy_audio(result["bgm"][0], songgen_model.sample_rate),
+            metadata,
+        )
+
+
+NODE_CLASS_MAPPINGS = {
+    "EasySongGenerationLoadModel": SongGenerationLoadModel,
+    "EasySongGenerationReleaseModel": SongGenerationReleaseModel,
+    "EasySongGenerationGenerateMixed": SongGenerationGenerateMixed,
+    "EasySongGenerationGenerateVocal": SongGenerationGenerateVocal,
+    "EasySongGenerationGenerateBGM": SongGenerationGenerateBGM,
+    "EasySongGenerationGenerateSeparate": SongGenerationGenerateSeparate,
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = _tr_mapping("node_display_names", {
+    "EasySongGenerationLoadModel": "Easy SongGeneration - Load Model",
+    "EasySongGenerationReleaseModel": "Easy SongGeneration - Release Model",
+    "EasySongGenerationGenerateMixed": "Easy SongGeneration - Generate Mixed",
+    "EasySongGenerationGenerateVocal": "Easy SongGeneration - Generate Vocal",
+    "EasySongGenerationGenerateBGM": "Easy SongGeneration - Generate BGM",
+    "EasySongGenerationGenerateSeparate": "Easy SongGeneration - Generate Separate",
+})
