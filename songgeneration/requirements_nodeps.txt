@@ -1,2 +1,2 @@
-antlr4-python3-runtime>=4.9,<4.10
-omegaconf>=2.2.0,<3.0
+# antlr4-python3-runtime>=4.9,<4.10  # only needed by upstream omegaconf
+# omegaconf>=2.2.0,<3.0  # replaced by local omegaconf.py static config compatibility subset

@@ -4,6 +4,7 @@ import argparse
 
 import time
 import json
+import wave
 import torch
 import torchaudio
 import numpy as np
@@ -13,7 +14,6 @@ import gc
 from codeclm.models import CodecLM
 from third_party.demucs.models.pretrained import get_model_from_yaml
 import re
-import librosa
 
 auto_prompt_type = ['Pop', 'Latin', 'Rock', 'Electronic', 'Metal', 'Country', 'R&B/Soul', 'Ballad', 'Jazz', 'World', 'Hip-Hop', 'Funk', 'Soundtrack','Auto']
 
@@ -31,14 +31,58 @@ def check_language_by_text(text):
     else:
         return "en"
 
-def load_audio_by_librosa(f):
-    a, fs= librosa.load(f, sr=48000)
-    a = torch.tensor(a).unsqueeze(0)
-    if (fs != 48000):
-        a = torchaudio.functional.resample(a, fs, 48000)
-    if a.shape[-1] >= 48000*10:
-        a = a[..., :48000*10]
-    return a[:, 0:48000*10], 48000
+def load_pcm_wav(f):
+    """Minimal stdlib WAV fallback for environments without optional audio backends."""
+    with wave.open(f, "rb") as wav_file:
+        channels = wav_file.getnchannels()
+        sample_width = wav_file.getsampwidth()
+        sample_rate = wav_file.getframerate()
+        frames = wav_file.readframes(wav_file.getnframes())
+
+    if sample_width == 1:
+        audio = np.frombuffer(frames, dtype=np.uint8).astype(np.float32)
+        audio = (audio - 128.0) / 128.0
+    elif sample_width == 2:
+        audio = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+    elif sample_width == 3:
+        raw = np.frombuffer(frames, dtype=np.uint8).reshape(-1, 3).astype(np.int32)
+        audio = raw[:, 0] | (raw[:, 1] << 8) | (raw[:, 2] << 16)
+        audio = ((audio ^ 0x800000) - 0x800000).astype(np.float32) / 8388608.0
+    elif sample_width == 4:
+        audio = np.frombuffer(frames, dtype="<i4").astype(np.float32) / 2147483648.0
+    else:
+        raise ValueError(f"Unsupported PCM WAV sample width: {sample_width}")
+
+    audio = audio.reshape(-1, channels).T
+    return torch.from_numpy(audio), sample_rate
+
+
+def load_audio_48k(f):
+    try:
+        audio, sample_rate = torchaudio.load(f)
+    except Exception:
+        audio, sample_rate = load_pcm_wav(f)
+    if sample_rate != 48000:
+        audio = torchaudio.functional.resample(audio, sample_rate, 48000)
+    if audio.shape[-1] >= 48000 * 10:
+        audio = audio[..., :48000 * 10]
+    return audio[:, 0:48000 * 10]
+
+
+def save_pcm_wav(path, audio, sample_rate):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    audio = audio.detach().cpu().float()
+    if audio.dim() == 1:
+        audio = audio.unsqueeze(0)
+    if audio.dim() != 2:
+        raise ValueError("WAV audio should have shape [C, T] or [T].")
+
+    pcm = (audio.clamp(-1.0, 1.0).t().contiguous().numpy() * 32767.0).astype(np.int16)
+    with wave.open(path, "wb") as wav_file:
+        wav_file.setnchannels(audio.shape[0])
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(int(sample_rate))
+        wav_file.writeframes(pcm.tobytes())
 
 class Separator:
     def __init__(self, dm_model_path='third_party/demucs/ckpt/htdemucs.pth', dm_config_path='third_party/demucs/ckpt/htdemucs.yaml', gpu_id=0) -> None:
@@ -55,17 +99,9 @@ class Separator:
         return model
     
     def load_audio(self, f):
-        try:
-            a, fs = torchaudio.load(f)
-        except:
-            a, fs = load_audio_by_librosa(f)
-        if (fs != 48000):
-            a = torchaudio.functional.resample(a, fs, 48000)
-        if a.shape[-1] >= 48000*10:
-            a = a[..., :48000*10]
-        return a[:, 0:48000*10]
+        return load_audio_48k(f)
     
-    def run(self, audio_path, output_dir='tmp', ext=".flac"):
+    def run(self, audio_path, output_dir='tmp', ext=".wav"):
         os.makedirs(output_dir, exist_ok=True)
         name, _ = os.path.splitext(os.path.split(audio_path)[-1])
         output_paths = []
@@ -131,7 +167,7 @@ def generate(args, version = 'v1'):
     new_items = []
     for line in lines:
         item = json.loads(line)
-        target_wav_name = f"{save_dir}/audios/{item['idx']}.flac"
+        target_wav_name = f"{save_dir}/audios/{item['idx']}.wav"
         # get prompt audio
         if "prompt_audio_path" in item:
             assert os.path.exists(item['prompt_audio_path']), f"prompt_audio_path {item['prompt_audio_path']} not found"
@@ -252,7 +288,7 @@ def generate(args, version = 'v1'):
         vocal_wav = item['vocal_wav']
         bgm_wav = item['bgm_wav']
         melody_is_wav = item['melody_is_wav']
-        target_wav_name = f"{save_dir}/audios/{item['idx']}.flac"
+        target_wav_name = f"{save_dir}/audios/{item['idx']}.wav"
 
         generate_inp = {
             'lyrics': [lyric.replace("  ", " ")] if gen_type != 'bgm' else '.',
@@ -294,11 +330,11 @@ def generate(args, version = 'v1'):
         del item['melody_is_wav']
         end_time = time.time()
         if gen_type == 'separate':
-            torchaudio.save(target_wav_name.replace('.flac', '_vocal.flac'), wav_vocal[0].cpu().float(), cfg.sample_rate)
-            torchaudio.save(target_wav_name.replace('.flac', '_bgm.flac'), wav_bgm[0].cpu().float(), cfg.sample_rate)
-            torchaudio.save(target_wav_name, wav_seperate[0].cpu().float(), cfg.sample_rate)
+            save_pcm_wav(target_wav_name.replace('.wav', '_vocal.wav'), wav_vocal[0], cfg.sample_rate)
+            save_pcm_wav(target_wav_name.replace('.wav', '_bgm.wav'), wav_bgm[0], cfg.sample_rate)
+            save_pcm_wav(target_wav_name, wav_seperate[0], cfg.sample_rate)
         else:
-            torchaudio.save(target_wav_name, wav_seperate[0].cpu().float(), cfg.sample_rate)
+            save_pcm_wav(target_wav_name, wav_seperate[0], cfg.sample_rate)
 
         print(f"process{item['idx']}, lm cost {mid_time - start_time}s, diffusion cost {end_time - mid_time}")
         item["idx"] = f"{item['idx']}"
@@ -339,7 +375,7 @@ def generate_lowmem(args, version = 'v1'):
     new_items = []
     for line in lines:
         item = json.loads(line)
-        target_wav_name = f"{save_dir}/audios/{item['idx']}.flac"
+        target_wav_name = f"{save_dir}/audios/{item['idx']}.wav"
         # get prompt audio
         if "prompt_audio_path" in item:
             assert os.path.exists(item['prompt_audio_path']), f"prompt_audio_path {item['prompt_audio_path']} not found"
@@ -546,11 +582,11 @@ def generate_lowmem(args, version = 'v1'):
                 else:
                     wav_seperate = model.generate_audio(item['tokens'], chunked=True, gen_type=gen_type)
         if gen_type == 'separate':
-            torchaudio.save(item['wav_path'].replace('.flac', '_vocal.flac'), wav_vocal[0].cpu().float(), cfg.sample_rate)
-            torchaudio.save(item['wav_path'].replace('.flac', '_bgm.flac'), wav_bgm[0].cpu().float(), cfg.sample_rate)
-            torchaudio.save(item['wav_path'], wav_seperate[0].cpu().float(), cfg.sample_rate)
+            save_pcm_wav(item['wav_path'].replace('.wav', '_vocal.wav'), wav_vocal[0], cfg.sample_rate)
+            save_pcm_wav(item['wav_path'].replace('.wav', '_bgm.wav'), wav_bgm[0], cfg.sample_rate)
+            save_pcm_wav(item['wav_path'], wav_seperate[0], cfg.sample_rate)
         else:
-            torchaudio.save(item['wav_path'], wav_seperate[0].cpu().float(), cfg.sample_rate)
+            save_pcm_wav(item['wav_path'], wav_seperate[0], cfg.sample_rate)
         del item['tokens']
         del item['pmt_wav']
         del item['vocal_wav']
