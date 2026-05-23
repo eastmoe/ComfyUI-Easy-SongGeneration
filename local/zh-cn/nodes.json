@@ -1,6 +1,7 @@
 {
   "category": "eastmoe/Comfy-Easy-SongGeneration",
   "node_display_names": {
+    "EasySongGenerationDownloadModel": "Easy SongGeneration - 下载模型",
     "EasySongGenerationLoadModel": "Easy SongGeneration - 加载模型",
     "EasySongGenerationReleaseModel": "Easy SongGeneration - 释放模型",
     "EasySongGenerationGenerateMixed": "Easy SongGeneration - 生成完整歌曲",
@@ -9,6 +10,7 @@
     "EasySongGenerationGenerateSeparate": "Easy SongGeneration - 分轨生成"
   },
   "descriptions": {
+    "EasySongGenerationDownloadModel": "从 eastmoe/SongGeneration 自动下载 common、third_party 和选中的模型目录到 ComfyUI/models/SongGeneration。",
     "EasySongGenerationLoadModel": "从 ComfyUI/models/SongGeneration 加载 SongGeneration 检查点，支持分段加载、精度选择和 Linear 权重量化缓存。",
     "EasySongGenerationReleaseModel": "释放已加载的 SongGeneration 模型并可清理 CUDA 显存缓存。",
     "EasySongGenerationGenerateMixed": "生成包含人声和伴奏的完整混音歌曲，输出 ComfyUI AUDIO。",
@@ -17,6 +19,7 @@
     "EasySongGenerationGenerateSeparate": "一次生成混音、人声和伴奏三路音频，输出 ComfyUI AUDIO。"
   },
   "return_names": {
+    "EasySongGenerationDownloadModel": ["状态"],
     "EasySongGenerationLoadModel": ["songgen_model", "信息"],
     "EasySongGenerationReleaseModel": ["状态"],
     "EasySongGenerationGenerateMixed": ["音频", "元数据"],

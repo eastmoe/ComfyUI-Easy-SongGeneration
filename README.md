@@ -35,6 +35,8 @@ git clone https://github.com/eastmoe/ComfyUI-Easy-SongGeneration.git
 ComfyUI/models/SongGeneration/
 ```
 
+可以直接在 ComfyUI 里使用 `Easy SongGeneration - 下载模型` 节点自动下载。节点会从 `eastmoe/SongGeneration` 下载到上面的目录，其中 `common` 和 `third_party` 会始终下载，`SongGeneration-*` 模型目录按节点里的 `模型目录` 选择下载。下载源可选 `hf-mirror.com` 或 `huggingface.co`，默认不会覆盖大小一致的本地文件。
+
 推荐结构：
 
 ```text
@@ -95,12 +97,24 @@ songgeneration/tools/new_auto_prompt.pt
 
 也可以在模型根目录提供同名运行时资源。
 
+### 自动下载模型
+
+添加 `Easy SongGeneration - 下载模型` 节点后运行即可。常用选项：
+
+- `下载源`：中国大陆网络通常可先选 `hf-mirror.com`，也可以切换为 `huggingface.co`。
+- `模型目录`：选择要下载的模型目录；`common` 与 `third_party` 始终会一起下载。可选 `SongGeneration-v2-large`、`SongGeneration-base-full`、`SongGeneration-base-new`、`runtime-only` 或 `all`。
+- `分支/版本`：默认 `main`。
+- `覆盖已有文件`：关闭时会跳过大小一致的文件；下载中断后再次运行会继续使用 `.download` 临时文件续传。
+
+下载完成后，在 `加载模型` 节点里刷新/重新打开模型下拉列表，即可选择刚下载的模型目录。
+
 ## 包含节点
 
 节点分类默认为 `eastmoe/Comfy-Easy-SongGeneration`，以下是当前版本节点列表：
 
 | 节点 | 作用 |
 | --- | --- |
+| `Easy SongGeneration - 下载模型` | 从 `eastmoe/SongGeneration` 自动下载 `common`、`third_party` 和选中的模型目录到 `ComfyUI/models/SongGeneration`。 |
 | `Easy SongGeneration - 加载模型` | 从 `ComfyUI/models/SongGeneration` 加载模型，输出 `songgen_model` 和模型信息 JSON。 |
 | `Easy SongGeneration - 释放模型` | 释放已加载模型，并可清理 CUDA/HIP 显存缓存。 |
 | `Easy SongGeneration - 生成完整歌曲` | 生成包含人声和伴奏的混音歌曲，输出 `AUDIO` 和元数据。 |
@@ -156,6 +170,7 @@ songgeneration/tools/new_auto_prompt.pt
   - 移除未直接使用的 `openunmix`、`huggingface-hub`、`x-transformers`、`packaging`、`librosa`、`lameenc` 等依赖。
 - 新增功能完整的推理 CLI，作为 可用于测试的本地推理入口。
 - 新增 ComfyUI 节点实现，支持模型加载、模型释放、混音/人声/伴奏/分轨输出，并返回 ComfyUI 原生 `AUDIO`。
+- 新增模型自动下载节点，支持从 `hf-mirror.com` 或 `huggingface.co` 下载 `eastmoe/SongGeneration` 中的必需运行时目录和选中的模型目录。
 - 新增 Linear 权重量化、量化缓存、LLM/Diffusion/VAE 精度选择和分段加载，改善显存占用与加载体验。
 - 新增 ComfyUI 右键菜单适配、中文节点翻译、加载与生成进度条，并支持 ComfyUI 中断回调。
 - 将原单文件节点实现拆分为 `easy_songgeneration_nodes` 包，分离配置、运行时、模型加载、量化、进度和节点定义，便于维护。
@@ -173,6 +188,7 @@ ComfyUI-Easy-SongGeneration/
   easy_songgeneration_nodes/
     __init__.py
     config.py                         # 节点常量、模型路径、量化/精度选项、翻译读取
+    downloader.py                     # Hugging Face / hf-mirror 模型下载
     model.py                          # 模型加载、缓存、推理调度、显存释放
     nodes.py                          # ComfyUI 节点定义
     options.py                        # 生成参数数据结构

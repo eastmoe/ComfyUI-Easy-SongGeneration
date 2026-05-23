@@ -16,6 +16,7 @@ from .config import (
     _tr_text,
     _ui,
 )
+from .downloader import DOWNLOAD_SOURCES, SONGGEN_DOWNLOAD_CHOICES, download_songgeneration_assets
 from .model import _load_model
 from .options import GenerationOptions
 from .runtime import _model_choices, _to_comfy_audio
@@ -157,6 +158,45 @@ class SongGenerationLoadModel:
         return (handle, json.dumps(info, ensure_ascii=False, indent=2))
 
 
+class SongGenerationDownloadModel:
+    CATEGORY = CATEGORY
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationDownloadModel", ("status",))
+    FUNCTION = "download"
+    OUTPUT_NODE = True
+    DESCRIPTION = _tr_text(
+        "descriptions.EasySongGenerationDownloadModel",
+        "Download SongGeneration runtime folders and selected model checkpoints to ComfyUI/models/SongGeneration.",
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "source": (DOWNLOAD_SOURCES, _ui("下载源", "可选 hf-mirror.com 或 huggingface.co。")),
+                "model": (
+                    SONGGEN_DOWNLOAD_CHOICES,
+                    _ui("模型目录", "common 和 third_party 始终下载；这里选择额外下载的 SongGeneration 模型。"),
+                ),
+                "revision": ("STRING", _ui("分支/版本", "Hugging Face revision，通常保持 main。", default="main")),
+                "overwrite_existing": ("BOOLEAN", _ui("覆盖已有文件", "关闭时会跳过大小一致的本地文件。", default=False)),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return float("nan")
+
+    def download(self, source, model, revision, overwrite_existing):
+        status = download_songgeneration_assets(
+            source=source,
+            model_choice=model,
+            revision=revision,
+            overwrite_existing=bool(overwrite_existing),
+        )
+        return (status,)
+
+
 class SongGenerationReleaseModel:
     CATEGORY = CATEGORY
     RETURN_TYPES = ("STRING",)
@@ -271,6 +311,7 @@ class SongGenerationGenerateSeparate:
 
 
 NODE_CLASS_MAPPINGS = {
+    "EasySongGenerationDownloadModel": SongGenerationDownloadModel,
     "EasySongGenerationLoadModel": SongGenerationLoadModel,
     "EasySongGenerationReleaseModel": SongGenerationReleaseModel,
     "EasySongGenerationGenerateMixed": SongGenerationGenerateMixed,
@@ -280,6 +321,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = _tr_mapping("node_display_names", {
+    "EasySongGenerationDownloadModel": "Easy SongGeneration - Download Model",
     "EasySongGenerationLoadModel": "Easy SongGeneration - Load Model",
     "EasySongGenerationReleaseModel": "Easy SongGeneration - Release Model",
     "EasySongGenerationGenerateMixed": "Easy SongGeneration - Generate Mixed",
