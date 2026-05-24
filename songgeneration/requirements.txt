@@ -17,10 +17,9 @@
 # vector-quantize-pytorch>=1.22.17  # replaced by Flow1dVAE/libs/rvq/descript_quantize3.py local RVQ implementation
 
 # diffusers>=0.37.1,<0.38  # replaced by local Flow1dVAE/models_gpt/models/diffusers_compat.py subset
-# huggingface-hub>=0.34.0,<2.0 # requied by transformers
-openunmix>=1.3.0 # required by bundled Demucs HTDemucs wiener filtering
-
-lameenc>=1.8.1  # imported by bundled Demucs audio helpers
+# huggingface-hub>=0.34.0,<2.0 # required by transformers
+# openunmix>=1.3.0 # optional: only needed by bundled Demucs non-CAC Wiener filtering
+# lameenc>=1.8.1  # optional: only needed by bundled Demucs MP3 export
 # librosa>=0.11.0  # replaced by torchaudio.load/resample plus a stdlib PCM WAV fallback
 # omegaconf>=2.2.0,<3.0  # replaced by local omegaconf.py static config compatibility subset
 # packaging>=24.0  # no direct runtime import in this project
