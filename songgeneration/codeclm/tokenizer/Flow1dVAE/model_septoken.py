@@ -342,7 +342,11 @@ class PromptCondAudioDiffusion(nn.Module):
     def extract_wav2vec_embeds(self, input_audios,output_len):
         wav2vec_stride = 2
 
-        wav2vec_embeds = self.hubert(self.rsq48tohubert(input_audios), output_hidden_states=True).hidden_states # 1, 4096, 1024
+        wav2vec_embeds = self.hubert(
+            self.rsq48tohubert(input_audios),
+            output_hidden_states=True,
+            return_dict=True,
+        ).hidden_states # 1, 4096, 1024
         wav2vec_embeds_last=wav2vec_embeds[-1]
         wav2vec_embeds_last=torch.nn.functional.interpolate(wav2vec_embeds_last.permute(0, 2, 1), size=output_len, mode='linear', align_corners=False).permute(0, 2, 1)
         return wav2vec_embeds_last

@@ -368,7 +368,11 @@ class PromptCondAudioDiffusion(nn.Module):
     def extract_wav2vec_embeds(self, input_audios,output_len):
         wav2vec_stride = 2
 
-        wav2vec_embeds = self.hubert(self.rsq48tohubert(input_audios), output_hidden_states=True).hidden_states # 1, 4096, 1024
+        wav2vec_embeds = self.hubert(
+            self.rsq48tohubert(input_audios),
+            output_hidden_states=True,
+            return_dict=True,
+        ).hidden_states # 1, 4096, 1024
         # print(wav2vec_embeds)
         # print("audio.shape:",input_audios.shape)
         wav2vec_embeds_last=wav2vec_embeds[self.hubert_layer]

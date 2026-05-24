@@ -133,7 +133,6 @@ class QwTokenizerConditioner(TextConditioner):
         
         self.structure_emb = nn.Embedding(200, output_dim, padding_idx=0)
         # self.split_token_id = vocab["."]
-        print("all structure tokens: ", {self.text_tokenizer.convert_ids_to_tokens(i):i for i in self.struct_token_ids})
         
     def tokenize(self, x: tp.List[tp.Optional[str]]) -> tp.Dict[str, torch.Tensor]:
         x = ['<|im_start|>' + xi if xi is not None else "<|im_start|>" for xi in x]
