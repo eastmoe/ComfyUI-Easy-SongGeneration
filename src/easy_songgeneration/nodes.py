@@ -107,7 +107,10 @@ class SongGenerationLoadModel:
                 "diffusion_precision": (_DTYPE_CHOICES, _ui_text("ui.load_model.diffusion_precision", "Diffusion 精度", "音频 Diffusion 解码模型计算精度。", default="float16")),
                 "vae_precision": (_DTYPE_CHOICES, _ui_text("ui.load_model.vae_precision", "VAE 精度", "音频 VAE 编解码计算精度。", default="float32")),
                 "reload_model": ("BOOLEAN", _ui_text("ui.load_model.reload_model", "重新加载", "忽略缓存并重新加载权重。", default=False)),
-            }
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+            },
         }
 
     def load(
@@ -125,6 +128,7 @@ class SongGenerationLoadModel:
         diffusion_precision,
         vae_precision,
         reload_model,
+        unique_id=None,
     ):
         handle = _load_model(
             model,
@@ -140,6 +144,7 @@ class SongGenerationLoadModel:
             llm_precision,
             diffusion_precision,
             vae_precision,
+            owner_id=unique_id,
         )
         info = {
             "model": handle.model_dir.name,

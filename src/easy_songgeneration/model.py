@@ -12,6 +12,7 @@ import torch
 
 from .config import (
     _MODEL_CACHE,
+    _MODEL_CACHE_OWNERS,
     _RUNTIME_LOCK,
     _dtype_from_choice,
     _normalize_quantization_mode,
@@ -441,6 +442,9 @@ class SongGenerationModelHandle:
 
     def release(self, *, clear_cuda_cache: bool = True) -> str:
         _MODEL_CACHE.pop(self.cache_key, None)
+        for owner_id, cache_key in list(_MODEL_CACHE_OWNERS.items()):
+            if cache_key == self.cache_key:
+                _MODEL_CACHE_OWNERS.pop(owner_id, None)
         self.model = None
         self.auto_prompt = None
         self.cfg = None
@@ -686,6 +690,7 @@ def _load_model(
     llm_precision: str,
     diffusion_precision: str,
     vae_precision: str,
+    owner_id: str | None = None,
 ) -> SongGenerationModelHandle:
     model_dir = _resolve_model_dir(model_name)
     runtime_roots = _runtime_roots(model_dir, runtime_root)
@@ -708,10 +713,25 @@ def _load_model(
         str(diffusion_dtype),
         str(vae_dtype),
     )
+    owner_key = str(owner_id) if owner_id is not None else None
+    if owner_key:
+        previous_key = _MODEL_CACHE_OWNERS.get(owner_key)
+        if previous_key is not None and previous_key != key:
+            previous_handle = _MODEL_CACHE.get(previous_key)
+            is_owned_elsewhere = any(
+                mapped_owner != owner_key and mapped_key == previous_key
+                for mapped_owner, mapped_key in _MODEL_CACHE_OWNERS.items()
+            )
+            if previous_handle is not None and not is_owned_elsewhere:
+                previous_handle.release(clear_cuda_cache=True)
+            else:
+                _MODEL_CACHE_OWNERS.pop(owner_key, None)
     if reload_model and key in _MODEL_CACHE:
         _MODEL_CACHE[key].release(clear_cuda_cache=True)
     cached = _MODEL_CACHE.get(key)
     if cached is not None and cached.loaded:
+        if owner_key:
+            _MODEL_CACHE_OWNERS[owner_key] = key
         return cached
     handle = SongGenerationModelHandle(
         cache_key=key,
@@ -729,6 +749,8 @@ def _load_model(
         vae_dtype=vae_dtype,
     )
     _MODEL_CACHE[key] = handle
+    if owner_key:
+        _MODEL_CACHE_OWNERS[owner_key] = key
     return handle
 
 
