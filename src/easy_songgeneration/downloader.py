@@ -1,13 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+import inspect
 import json
 import os
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
-from typing import Any
 
 from .config import _songgen_model_root
 from .progress import _SongGenProgress
@@ -23,39 +20,13 @@ SONGGEN_DOWNLOAD_MODELS = (
 SONGGEN_DOWNLOAD_CHOICES = [*SONGGEN_DOWNLOAD_MODELS, "runtime-only", "all"]
 
 
-def _base_url(source: str) -> str:
+def _endpoint(source: str) -> str:
     value = (source or DOWNLOAD_SOURCES[0]).strip().lower()
     if value in {"hf-mirror", "hf-mirror.com", "https://hf-mirror.com"}:
         return "https://hf-mirror.com"
     if value in {"huggingface", "huggingface.co", "https://huggingface.co"}:
         return "https://huggingface.co"
     raise ValueError(f"Unsupported download source: {source}")
-
-
-def _headers() -> dict[str, str]:
-    return {"User-Agent": "ComfyUI-Easy-SongGeneration"}
-
-
-def _read_json(url: str) -> Any:
-    request = urllib.request.Request(url, headers=_headers())
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Failed to read Hugging Face API ({exc.code}): {details}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Failed to connect to Hugging Face API: {exc.reason}") from exc
-
-
-def _repo_tree(base_url: str, revision: str) -> list[dict[str, Any]]:
-    repo = urllib.parse.quote(SONGGEN_REPO_ID, safe="/")
-    rev = urllib.parse.quote((revision or "main").strip() or "main", safe="")
-    url = f"{base_url}/api/models/{repo}/tree/{rev}?recursive=1"
-    payload = _read_json(url)
-    if not isinstance(payload, list):
-        raise RuntimeError(f"Unexpected repository tree response from {base_url}")
-    return [item for item in payload if isinstance(item, dict)]
 
 
 def _selected_prefixes(model_choice: str) -> tuple[str, ...]:
@@ -70,30 +41,6 @@ def _selected_prefixes(model_choice: str) -> tuple[str, ...]:
     return tuple(f"{name.rstrip('/')}/" for name in dirs)
 
 
-def _selected_files(tree: list[dict[str, Any]], model_choice: str) -> list[dict[str, Any]]:
-    prefixes = _selected_prefixes(model_choice)
-    files = []
-    for item in tree:
-        path = str(item.get("path") or "").strip("/")
-        if item.get("type") == "file" and path.startswith(prefixes):
-            files.append({**item, "path": path})
-    return sorted(files, key=lambda item: item["path"].lower())
-
-
-def _download_url(base_url: str, revision: str, path: str) -> str:
-    repo = urllib.parse.quote(SONGGEN_REPO_ID, safe="/")
-    rev = urllib.parse.quote((revision or "main").strip() or "main", safe="")
-    quoted_path = urllib.parse.quote(path, safe="/")
-    return f"{base_url}/{repo}/resolve/{rev}/{quoted_path}?download=true"
-
-
-def _file_size(item: dict[str, Any]) -> int | None:
-    size = item.get("size")
-    if isinstance(size, int) and size >= 0:
-        return size
-    return None
-
-
 def _target_path(target_root: Path, relative: str) -> Path:
     target = target_root / relative
     root = target_root.resolve()
@@ -103,92 +50,96 @@ def _target_path(target_root: Path, relative: str) -> Path:
     return target
 
 
-def _is_current(path: Path, size: int | None) -> bool:
-    if not path.is_file():
-        return False
-    if size is None:
-        return path.stat().st_size > 0
-    return path.stat().st_size == size
+def _allow_patterns(model_choice: str) -> list[str]:
+    return [f"{prefix}*" for prefix in _selected_prefixes(model_choice)]
 
 
-def _open_with_retries(url: str, *, offset: int = 0, retries: int = 3):
-    headers = _headers()
-    if offset > 0:
-        headers["Range"] = f"bytes={offset}-"
-    last_error: Exception | None = None
-    for attempt in range(max(1, retries)):
-        request = urllib.request.Request(url, headers=headers)
-        try:
-            return urllib.request.urlopen(request, timeout=120)
-        except urllib.error.HTTPError as exc:
-            if offset > 0 and exc.code == 416:
-                raise
-            last_error = exc
-        except urllib.error.URLError as exc:
-            last_error = exc
-        if attempt + 1 < retries:
-            time.sleep(2.0 * (attempt + 1))
-    raise RuntimeError(f"Failed to download {url}: {last_error}") from last_error
-
-
-def _download_one(
-    *,
-    base_url: str,
-    revision: str,
-    item: dict[str, Any],
-    target_root: Path,
-    overwrite_existing: bool,
-    progress: _SongGenProgress,
-    downloaded_bytes: int,
-    total_bytes: int,
-) -> tuple[str, int]:
-    relative = item["path"]
-    size = _file_size(item)
-    target = _target_path(target_root, relative)
-    target.parent.mkdir(parents=True, exist_ok=True)
-
-    if not overwrite_existing and _is_current(target, size):
-        return f"skip {relative}", downloaded_bytes + (size or 0)
-
-    temp = target.with_name(f"{target.name}.download")
-    if overwrite_existing and temp.exists():
-        temp.unlink()
-
-    offset = temp.stat().st_size if temp.exists() else 0
-    if size is not None and offset > size:
-        temp.unlink()
-        offset = 0
-    if size is not None and offset == size:
-        temp.replace(target)
-        return f"download {relative}", downloaded_bytes + size
-
-    url = _download_url(base_url, revision, relative)
-    mode = "ab" if offset > 0 else "wb"
-    current = downloaded_bytes + offset
-    progress.update_absolute(current, total=max(1, total_bytes), label=f"下载 {relative}")
+def _snapshot_download(**kwargs):
     try:
-        with _open_with_retries(url, offset=offset) as response:
-            if offset > 0 and getattr(response, "status", None) == 200:
-                temp.unlink(missing_ok=True)
-                mode = "wb"
-                current = downloaded_bytes
-            with temp.open(mode) as file:
-                while True:
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    file.write(chunk)
-                    current += len(chunk)
-                    progress.update_absolute(current, total=max(1, total_bytes), label=f"下载 {relative}")
-    except Exception:
-        if temp.exists() and temp.stat().st_size == 0:
-            temp.unlink(missing_ok=True)
-        raise
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:
+        raise RuntimeError(
+            "huggingface_hub is required for model downloads. "
+            "ComfyUI's transformers dependency normally installs it."
+        ) from exc
 
-    if size is not None and temp.stat().st_size != size:
-        raise RuntimeError(f"Downloaded size mismatch for {relative}: expected {size}, got {temp.stat().st_size}")
-    temp.replace(target)
-    return f"download {relative}", downloaded_bytes + (size or target.stat().st_size)
+    parameters = inspect.signature(snapshot_download).parameters
+    supported_kwargs = {key: value for key, value in kwargs.items() if key in parameters}
+    return snapshot_download(**supported_kwargs)
+
+
+def _dry_run_supported() -> bool:
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        return False
+    return "dry_run" in inspect.signature(snapshot_download).parameters
+
+
+def _cleanup_legacy_partials(target_root: Path, model_choice: str) -> int:
+    removed = 0
+    for prefix in _selected_prefixes(model_choice):
+        directory = _target_path(target_root, prefix)
+        if not directory.exists():
+            continue
+        for partial in directory.rglob("*.download"):
+            _target_path(target_root, os.fspath(partial.relative_to(target_root)))
+            partial.unlink(missing_ok=True)
+            removed += 1
+    return removed
+
+
+@contextmanager
+def _hf_ssl_context(disable_ssl_verify: bool):
+    if not disable_ssl_verify:
+        yield
+        return
+
+    try:
+        import httpx
+        from huggingface_hub import set_client_factory
+        from huggingface_hub.utils._http import default_client_factory, hf_request_event_hook
+    except Exception:
+        pass
+    else:
+
+        def unverified_client_factory():
+            return httpx.Client(
+                verify=False,
+                event_hooks={"request": [hf_request_event_hook]},
+                follow_redirects=True,
+                timeout=None,
+            )
+
+        set_client_factory(unverified_client_factory)
+        try:
+            yield
+        finally:
+            set_client_factory(default_client_factory)
+        return
+
+    try:
+        import requests
+        import urllib3
+        try:
+            from huggingface_hub import configure_http_backend
+        except ImportError:
+            from huggingface_hub.utils import configure_http_backend
+    except Exception as exc:
+        raise RuntimeError("This huggingface_hub version does not support disabling SSL verification.") from exc
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    def unverified_backend_factory():
+        session = requests.Session()
+        session.verify = False
+        return session
+
+    configure_http_backend(backend_factory=unverified_backend_factory)
+    try:
+        yield
+    finally:
+        configure_http_backend(backend_factory=lambda: requests.Session())
 
 
 def download_songgeneration_assets(
@@ -197,44 +148,61 @@ def download_songgeneration_assets(
     model_choice: str,
     revision: str,
     overwrite_existing: bool,
+    download_threads: int = 8,
+    disable_ssl_verify: bool = False,
 ) -> str:
-    base_url = _base_url(source)
+    endpoint = _endpoint(source)
+    revision = (revision or "main").strip() or "main"
     target_root = _songgen_model_root()
-    tree = _repo_tree(base_url, revision)
-    files = _selected_files(tree, model_choice)
-    if not files:
-        raise RuntimeError(f"No matching files found in {SONGGEN_REPO_ID} for {model_choice}")
+    target_root.mkdir(parents=True, exist_ok=True)
+    patterns = _allow_patterns(model_choice)
+    max_workers = max(1, int(download_threads or 1))
+    removed_partials = _cleanup_legacy_partials(target_root, model_choice)
 
-    planned_bytes = 0
-    for item in files:
-        size = _file_size(item)
-        target = _target_path(target_root, item["path"])
-        if overwrite_existing or not _is_current(target, size):
-            planned_bytes += size or 1
-
-    progress = _SongGenProgress(max(1, planned_bytes), "下载 SongGeneration 模型")
-    downloaded_bytes = 0
-    downloaded = 0
-    skipped = 0
+    dry_run_files = []
+    downloaded = None
+    skipped = None
+    planned_bytes = None
+    progress = _SongGenProgress(3, "准备 SongGeneration 模型下载")
     try:
-        for item in files:
-            size = _file_size(item)
-            target = _target_path(target_root, item["path"])
-            if not overwrite_existing and _is_current(target, size):
-                skipped += 1
-                continue
-            action, downloaded_bytes = _download_one(
-                base_url=base_url,
+        with _hf_ssl_context(bool(disable_ssl_verify)):
+            if _dry_run_supported():
+                dry_run_files = list(
+                    _snapshot_download(
+                        repo_id=SONGGEN_REPO_ID,
+                        repo_type="model",
+                        revision=revision,
+                        local_dir=target_root,
+                        endpoint=endpoint,
+                        allow_patterns=patterns,
+                        max_workers=max_workers,
+                        force_download=bool(overwrite_existing),
+                        user_agent="ComfyUI-Easy-SongGeneration",
+                        dry_run=True,
+                    )
+                )
+                if not dry_run_files:
+                    raise RuntimeError(f"No matching files found in {SONGGEN_REPO_ID} for {model_choice}")
+                downloaded = sum(1 for item in dry_run_files if getattr(item, "will_download", False))
+                skipped = len(dry_run_files) - downloaded
+                planned_bytes = sum(
+                    int(getattr(item, "file_size", 0) or 0)
+                    for item in dry_run_files
+                    if getattr(item, "will_download", False)
+                )
+            progress.update_absolute(1, total=3, label="下载 SongGeneration 模型")
+            _snapshot_download(
+                repo_id=SONGGEN_REPO_ID,
+                repo_type="model",
                 revision=revision,
-                item=item,
-                target_root=target_root,
-                overwrite_existing=overwrite_existing,
-                progress=progress,
-                downloaded_bytes=downloaded_bytes,
-                total_bytes=max(1, planned_bytes),
+                local_dir=target_root,
+                endpoint=endpoint,
+                allow_patterns=patterns,
+                max_workers=max_workers,
+                force_download=bool(overwrite_existing),
+                user_agent="ComfyUI-Easy-SongGeneration",
             )
-            if action.startswith("download "):
-                downloaded += 1
+            progress.update_absolute(2, total=3, label="校验 SongGeneration 模型下载")
         progress.finish("SongGeneration 模型下载完成")
     except Exception:
         progress.close()
@@ -243,12 +211,17 @@ def download_songgeneration_assets(
     selected_dirs = [prefix.rstrip("/") for prefix in _selected_prefixes(model_choice)]
     info = {
         "repository": SONGGEN_REPO_ID,
-        "source": base_url,
-        "revision": (revision or "main").strip() or "main",
+        "source": endpoint,
+        "revision": revision,
         "target": os.fspath(target_root),
         "directories": selected_dirs,
-        "files": len(files),
+        "allow_patterns": patterns,
+        "files": len(dry_run_files) if dry_run_files else None,
         "downloaded": downloaded,
         "skipped": skipped,
+        "planned_bytes": planned_bytes,
+        "download_threads": max_workers,
+        "ssl_verification": not bool(disable_ssl_verify),
+        "legacy_partial_files_removed": removed_partials,
     }
     return json.dumps(info, ensure_ascii=False, indent=2)

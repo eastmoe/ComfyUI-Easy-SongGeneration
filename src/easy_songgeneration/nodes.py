@@ -180,6 +180,11 @@ class SongGenerationDownloadModel:
                 ),
                 "revision": ("STRING", _ui_text("ui.download_model.revision", "分支/版本", "Hugging Face revision，通常保持 main。", default="main")),
                 "overwrite_existing": ("BOOLEAN", _ui_text("ui.download_model.overwrite_existing", "覆盖已有文件", "关闭时会跳过大小一致的本地文件。", default=False)),
+                "download_threads": ("INT", _ui_text("ui.download_model.download_threads", "下载线程", "huggingface_hub 并发下载线程数。", default=8, min=1, max=32)),
+                "disable_ssl_verify": (
+                    "BOOLEAN",
+                    _ui_text("ui.download_model.disable_ssl_verify", "关闭 SSL 验证", "仅在证书链异常或代理拦截 HTTPS 时开启。", default=False),
+                ),
             }
         }
 
@@ -187,12 +192,14 @@ class SongGenerationDownloadModel:
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
-    def download(self, source, model, revision, overwrite_existing):
+    def download(self, source, model, revision, overwrite_existing, download_threads=8, disable_ssl_verify=False):
         status = download_songgeneration_assets(
             source=source,
             model_choice=model,
             revision=revision,
             overwrite_existing=bool(overwrite_existing),
+            download_threads=int(download_threads),
+            disable_ssl_verify=bool(disable_ssl_verify),
         )
         return (status,)
 

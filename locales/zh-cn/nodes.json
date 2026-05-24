@@ -114,6 +114,14 @@
       "overwrite_existing": {
         "display_name": "覆盖已有文件",
         "tooltip": "关闭时会跳过大小一致的本地文件。"
+      },
+      "download_threads": {
+        "display_name": "下载线程",
+        "tooltip": "huggingface_hub 并发下载线程数。"
+      },
+      "disable_ssl_verify": {
+        "display_name": "关闭 SSL 验证",
+        "tooltip": "仅在证书链异常或代理拦截 HTTPS 时开启。"
       }
     },
     "load_model": {
