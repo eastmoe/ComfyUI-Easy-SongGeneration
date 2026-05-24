@@ -100,7 +100,6 @@ class LmModel(LlamaModel_base):
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.post_init()
-        self.gradient_checkpointing_disable()
 
     def forward(
         self,

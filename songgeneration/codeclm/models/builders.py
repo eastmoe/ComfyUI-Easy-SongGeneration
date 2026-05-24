@@ -84,7 +84,7 @@ def get_lm_model(cfg: omegaconf.DictConfig, version: str = 'v1'): #-> LMModel:
     lm_type = lm_kwargs['lm_type'] # YCY: For consistency, choose different lm.py based on lm_type
     if lm_type == 'Llama':
         from .lm_levo import LmModel
-        return LmModel(
+        model = LmModel(
             pattern_provider=pattern_provider,
             condition_provider=condition_provider,
             fuser=fuser,
@@ -93,7 +93,10 @@ def get_lm_model(cfg: omegaconf.DictConfig, version: str = 'v1'): #-> LMModel:
             attribute_dropout=attribute_dropout,
             cfg=cfg,
             **lm_kwargs
-        ).to('cpu')
+        )
+        if bool(getattr(cfg, "_easy_songgen_meta_init", False)):
+            return model
+        return model.to('cpu')
     else:
         raise KeyError(f"Unexpected LM model {lm_type}")
 

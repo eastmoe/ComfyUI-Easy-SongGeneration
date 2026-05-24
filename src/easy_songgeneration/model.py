@@ -79,6 +79,7 @@ class SongGenerationModelHandle:
         self.auto_prompt = None
         self._modules: dict[str, Any] = {}
         self.quantization_info: dict[str, Any] = {}
+        self._lazy_separate_tokenizer_enabled = False
         self._load()
 
     @property
@@ -176,6 +177,62 @@ class SongGenerationModelHandle:
         if self.model is not None:
             self._move_tango_tokenizer(self.model.seperate_tokenizer, device, scope_prefix="separate-tokenizer")
 
+    def _release_separate_tokenizer(self) -> None:
+        if self.model is None or self.model.seperate_tokenizer is None:
+            return
+        self.model.seperate_tokenizer = None
+        self._cleanup_memory()
+
+    def _ensure_separate_tokenizer(self) -> torch.nn.Module | None:
+        if self.model is not None and self.model.seperate_tokenizer is not None:
+            return self.model.seperate_tokenizer
+        if self.cfg is None or "audio_tokenizer_checkpoint_sep" not in self.cfg.keys():
+            return None
+        builders = self._modules.get("builders")
+        if builders is None:
+            raise RuntimeError("SongGeneration builders are not initialized.")
+        tokenizer_builder = getattr(builders, "get_audio_tokenizer_model_cpu", builders.get_audio_tokenizer_model)
+        tokenizer = tokenizer_builder(self.cfg.audio_tokenizer_checkpoint_sep, self.cfg)
+        tokenizer = self._configure_tango_tokenizer(tokenizer, scope_prefix="separate-tokenizer")
+        if self.model is not None:
+            self.model.seperate_tokenizer = tokenizer
+        return tokenizer
+
+    def _build_lm_model(self, builders: Any, cfg: Any) -> torch.nn.Module:
+        if not self.segmented_load:
+            return builders.get_lm_model(cfg, version=self.version)
+        cfg._easy_songgen_meta_init = True
+        try:
+            with torch.device("meta"):
+                return builders.get_lm_model(cfg, version=self.version)
+        finally:
+            cfg._easy_songgen_meta_init = False
+
+    def _materialize_remaining_meta_tensors(self, module: torch.nn.Module) -> None:
+        for child in module.modules():
+            if child.__class__.__name__ in {
+                "LlamaRotaryEmbedding",
+                "LlamaLinearScalingRotaryEmbedding",
+                "LlamaDynamicNTKScalingRotaryEmbedding",
+            } and hasattr(child, "dim") and hasattr(child, "base"):
+                dim = int(child.dim)
+                base = float(child.base)
+                inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+                child.register_buffer("inv_freq", inv_freq, persistent=False)
+                if hasattr(child, "_set_cos_sin_cache"):
+                    seq_len = int(getattr(child, "max_seq_len_cached", getattr(child, "max_position_embeddings", 2048)))
+                    child._set_cos_sin_cache(seq_len=seq_len, device=torch.device("cpu"), dtype=torch.get_default_dtype())
+
+            for name, buffer in list(child.named_buffers(recurse=False)):
+                if isinstance(buffer, torch.Tensor) and buffer.is_meta:
+                    child._buffers[name] = torch.zeros(buffer.shape, dtype=buffer.dtype, device="cpu")
+            for name, param in list(child.named_parameters(recurse=False)):
+                if isinstance(param, torch.nn.Parameter) and param.is_meta:
+                    child._parameters[name] = torch.nn.Parameter(
+                        torch.empty(param.shape, dtype=param.dtype, device="cpu"),
+                        requires_grad=param.requires_grad,
+                    )
+
     def _quantizes(self, name: str) -> bool:
         mode = _normalize_quantization_mode(self.quantization)
         if mode is None:
@@ -190,7 +247,7 @@ class SongGenerationModelHandle:
         return False
 
     def _configure_tango_tokenizer(self, tokenizer: torch.nn.Module, *, scope_prefix: str) -> torch.nn.Module:
-        device = self._device()
+        device = torch.device("cpu") if self.segmented_load else self._device()
         tango = getattr(tokenizer, "model", None)
         if tango is None:
             return tokenizer.eval().to(device=device)
@@ -251,7 +308,7 @@ class SongGenerationModelHandle:
         return tokenizer.eval()
 
     def _load_lm(self, builders, cfg, ckpt_path: Path) -> torch.nn.Module:
-        audiolm = builders.get_lm_model(cfg, version=self.version)
+        audiolm = self._build_lm_model(builders, cfg)
         mode = _normalize_quantization_mode(self.quantization)
         signature = {"kind": "llm", "checkpoint": _path_signature(ckpt_path), "version": self.version}
         if self._quantizes("llm") and mode is not None:
@@ -272,13 +329,14 @@ class SongGenerationModelHandle:
                             progress.close()
                             raise
                         _load_state_dict_assign(audiolm, state_dict, strict=False)
+                        self._materialize_remaining_meta_tensors(audiolm)
                         self.quantization_info["llm"] = {"count": len(module_names), "status": f"loaded {cache_path.name}"}
                         audiolm.requires_grad_(False)
                         return audiolm
                     print(f"[Easy-SongGeneration] Ignoring stale LLM quantization cache: {cache_path}", flush=True)
                 except Exception as exc:
                     print(f"[Easy-SongGeneration] Failed to load LLM quantization cache, rebuilding: {exc}", flush=True)
-                    audiolm = builders.get_lm_model(cfg, version=self.version)
+                    audiolm = self._build_lm_model(builders, cfg)
 
         checkpoint = _torch_load_weights(ckpt_path, map_location="cpu")
         if self.segmented_load:
@@ -288,6 +346,7 @@ class SongGenerationModelHandle:
             audiolm.load_state_dict(audiolm_state_dict, strict=False)
         del checkpoint
         gc.collect()
+        self._materialize_remaining_meta_tensors(audiolm)
 
         if self._quantizes("llm") and mode is not None:
             count, status = _apply_quantization_cache(
@@ -348,10 +407,13 @@ class SongGenerationModelHandle:
 
             seperate_tokenizer = None
             if "audio_tokenizer_checkpoint_sep" in cfg.keys():
-                tokenizer_builder = getattr(builders, "get_audio_tokenizer_model_cpu", builders.get_audio_tokenizer_model)
-                seperate_tokenizer = tokenizer_builder(cfg.audio_tokenizer_checkpoint_sep, cfg)
-                seperate_tokenizer = self._configure_tango_tokenizer(seperate_tokenizer, scope_prefix="separate-tokenizer")
-            progress.update(1, label="加载音频分词器")
+                if self.segmented_load:
+                    self._lazy_separate_tokenizer_enabled = True
+                else:
+                    tokenizer_builder = getattr(builders, "get_audio_tokenizer_model_cpu", builders.get_audio_tokenizer_model)
+                    seperate_tokenizer = tokenizer_builder(cfg.audio_tokenizer_checkpoint_sep, cfg)
+                    seperate_tokenizer = self._configure_tango_tokenizer(seperate_tokenizer, scope_prefix="separate-tokenizer")
+            progress.update(1, label="延迟加载音频分词器" if self._lazy_separate_tokenizer_enabled else "加载音频分词器")
 
             audiolm = self._load_lm(builders, cfg, ckpt_path)
             audiolm = audiolm.eval()
@@ -423,6 +485,9 @@ class SongGenerationModelHandle:
             tokenizer_builder = getattr(builders, "get_audio_tokenizer_model_cpu", builders.get_audio_tokenizer_model)
             audio_tokenizer = tokenizer_builder(self.cfg.audio_tokenizer_checkpoint, self.cfg)
             audio_tokenizer = self._configure_tango_tokenizer(audio_tokenizer, scope_prefix="prompt-tokenizer")
+            self._move_tango_tokenizer(audio_tokenizer, self._device(), scope_prefix="prompt-tokenizer")
+            if self.model.seperate_tokenizer is None:
+                self._ensure_separate_tokenizer()
             if self.model.seperate_tokenizer is not None:
                 self._move_separate_tokenizer(self._device())
             with torch.no_grad():
@@ -558,7 +623,10 @@ class SongGenerationModelHandle:
                     with torch.no_grad():
                         if self.segmented_load:
                             self._move_lm(torch.device("cpu"))
+                            self._ensure_separate_tokenizer()
                             self._move_separate_tokenizer(self._device())
+                        elif self.model.seperate_tokenizer is None:
+                            self._ensure_separate_tokenizer()
                         raw_args = ()
                         if "raw_pmt_wav" in conditioning and options.generate_type == "mixed":
                             raw_args = (
@@ -586,7 +654,10 @@ class SongGenerationModelHandle:
             finally:
                 decode_progress.close(finish=decode_success)
                 if self.segmented_load:
-                    self._move_separate_tokenizer(torch.device("cpu"))
+                    if self._lazy_separate_tokenizer_enabled:
+                        self._release_separate_tokenizer()
+                    else:
+                        self._move_separate_tokenizer(torch.device("cpu"))
             end_time = time.time()
 
             metadata = {
