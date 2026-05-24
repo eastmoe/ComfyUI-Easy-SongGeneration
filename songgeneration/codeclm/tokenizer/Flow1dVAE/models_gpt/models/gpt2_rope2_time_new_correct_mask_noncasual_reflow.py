@@ -38,7 +38,37 @@ from transformers.modeling_outputs import (
     TokenClassifierOutput,
 )
 from transformers.modeling_utils import PreTrainedModel
-from transformers.pytorch_utils import Conv1D, find_pruneable_heads_and_indices, prune_conv1d_layer
+from transformers.pytorch_utils import Conv1D
+try:
+    from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_conv1d_layer
+except ImportError:
+    def find_pruneable_heads_and_indices(heads, n_heads, head_size, already_pruned_heads):
+        heads = set(heads) - already_pruned_heads
+        mask = torch.ones(n_heads, head_size)
+        for head in heads:
+            head -= sum(1 if pruned_head < head else 0 for pruned_head in already_pruned_heads)
+            mask[head] = 0
+        mask = mask.view(-1).contiguous().eq(1)
+        index = torch.arange(len(mask))[mask].long()
+        return heads, index
+
+    def prune_conv1d_layer(layer, index, dim=1):
+        index = index.to(layer.weight.device)
+        weight = layer.weight.index_select(dim, index).clone().detach()
+        if dim == 0:
+            bias = layer.bias.clone().detach()
+        else:
+            bias = layer.bias[index].clone().detach()
+        new_size = list(layer.weight.size())
+        new_size[dim] = len(index)
+        new_layer = Conv1D(new_size[1], new_size[0]).to(device=layer.weight.device, dtype=layer.weight.dtype)
+        new_layer.weight.requires_grad = False
+        new_layer.weight.copy_(weight.contiguous())
+        new_layer.weight.requires_grad = True
+        new_layer.bias.requires_grad = False
+        new_layer.bias.copy_(bias.contiguous())
+        new_layer.bias.requires_grad = True
+        return new_layer
 from transformers.utils import (
     ModelOutput,
     add_code_sample_docstrings,
