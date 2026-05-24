@@ -13,6 +13,18 @@ def _load_state_dict_assign(model, state_dict, *, strict=False):
     except TypeError:
         return model.load_state_dict(state_dict, strict=strict)
 
+
+def _module_device_dtype(module, fallback_device, fallback_dtype=torch.float32):
+    try:
+        tensor = next(module.parameters())
+    except StopIteration:
+        try:
+            tensor = next(module.buffers())
+        except StopIteration:
+            return torch.device(fallback_device), fallback_dtype
+    return tensor.device, tensor.dtype
+
+
 class Tango:
     def __init__(self, \
         model_path, \
@@ -168,7 +180,16 @@ class Tango:
                 # else choose from 20.48s which might includes verse or chorus
                 prompt = prompt[:,int(20*self.sample_rate):int(30*self.sample_rate)] # limit max length to 10.24
             
-            true_latent = self.vae.encode_audio(prompt).permute(0,2,1)
+            vae_device, vae_dtype = _module_device_dtype(
+                self.vae,
+                self.device,
+                getattr(self, "vae_dtype", torch.float32),
+            )
+            prompt_audio = prompt.to(device=vae_device, dtype=vae_dtype)
+            true_latent = self.vae.encode_audio(prompt_audio).permute(0,2,1).to(
+                device=first_latent.device,
+                dtype=first_latent.dtype,
+            )
             # print("true_latent.shape", true_latent.shape)
             # print("first_latent.shape", first_latent.shape)
             #true_latent.shape torch.Size([1, 250, 64])
@@ -225,7 +246,12 @@ class Tango:
             ):
                 latents = self.model.inference_codes(codes_input, spk_embeds, context_latent, latent_length, incontext_length=incontext_length, additional_feats=[], guidance_scale=1.5, num_steps = num_steps, disable_progress=disable_progress, scenario='other_seg')
             prev_latent_tail = latents[:, :, -ovlp_frames:].detach()
-            decode_latent = latents.float()
+            vae_device, vae_dtype = _module_device_dtype(
+                self.vae,
+                self.device,
+                getattr(self, "vae_dtype", torch.float32),
+            )
+            decode_latent = latents.to(device=vae_device, dtype=vae_dtype)
             if sinx == 0:
                 decode_latent = decode_latent[:,:,first_latent_length:]
             torch.cuda.empty_cache()
