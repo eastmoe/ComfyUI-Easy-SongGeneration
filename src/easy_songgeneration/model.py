@@ -34,6 +34,7 @@ from .runtime import (
     _infer_version,
     _register_resolvers,
     _resolve_existing_path,
+    _resolve_config_token_paths,
     _resolve_prefixed_existing_path,
     _resolve_model_dir,
     _resolve_runtime_file,
@@ -244,6 +245,7 @@ class SongGenerationModelHandle:
                 cfg.vae_config = _resolve_existing_path(str(cfg.vae_config), self.runtime_roots)
             if "vae_model" in cfg.keys():
                 cfg.vae_model = _resolve_existing_path(str(cfg.vae_model), self.runtime_roots)
+            _resolve_config_token_paths(cfg, self.runtime_roots)
             self.cfg = cfg
             self.sample_rate = int(getattr(cfg, "sample_rate", 48000))
             progress.update(1, label="读取模型配置")

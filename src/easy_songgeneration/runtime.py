@@ -132,6 +132,23 @@ def _resolve_prefixed_existing_path(value: str | None, roots: list[Path]) -> str
     return _resolve_existing_path(text, roots)
 
 
+def _resolve_config_token_paths(value: Any, roots: list[Path]) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _resolve_config_token_paths(item, roots)
+        return
+
+    items = getattr(value, "items", None)
+    if items is None:
+        return
+
+    for key, item in list(items()):
+        if key == "token_path" and isinstance(item, str):
+            value[key] = _resolve_existing_path(item, roots)
+        else:
+            _resolve_config_token_paths(item, roots)
+
+
 def _resolve_runtime_file(relative_path: str, roots: list[Path]) -> str:
     searched = []
     for root in roots:
