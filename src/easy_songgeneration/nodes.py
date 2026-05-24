@@ -6,6 +6,7 @@ from typing import Any
 from .config import (
     AUTO_PROMPT_TYPES,
     CATEGORY,
+    _DIFFUSION_DTYPE_CHOICES,
     SONGGEN_MODEL_TYPE,
     _DTYPE_CHOICES,
     _QUANTIZATION_CHOICES,
@@ -104,7 +105,7 @@ class SongGenerationLoadModel:
                     _ui_text("ui.load_model.rebuild_quantization_cache", "重建量化缓存", "忽略已有量化缓存并重新生成。", default=False),
                 ),
                 "llm_precision": (_DTYPE_CHOICES, _ui_text("ui.load_model.llm_precision", "LLM 精度", "LLM 推理/权重计算精度。", default="float16")),
-                "diffusion_precision": (_DTYPE_CHOICES, _ui_text("ui.load_model.diffusion_precision", "Diffusion 精度", "音频 Diffusion 解码模型计算精度。", default="float16")),
+                "diffusion_precision": (_DIFFUSION_DTYPE_CHOICES, _ui_text("ui.load_model.diffusion_precision", "Diffusion 精度", "音频 Diffusion 解码模型计算精度。", default="bfloat16")),
                 "vae_precision": (_DTYPE_CHOICES, _ui_text("ui.load_model.vae_precision", "VAE 精度", "音频 VAE 编解码计算精度。", default="float32")),
                 "reload_model": ("BOOLEAN", _ui_text("ui.load_model.reload_model", "重新加载", "忽略缓存并重新加载权重。", default=False)),
             },

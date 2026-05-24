@@ -46,6 +46,7 @@ _RUNTIME_LOCK = threading.RLock()
 _MODEL_CACHE: dict[tuple[Any, ...], "SongGenerationModelHandle"] = {}
 _MODEL_CACHE_OWNERS: dict[str, tuple[Any, ...]] = {}
 _DTYPE_CHOICES = ["float16", "bfloat16", "float32"]
+_DIFFUSION_DTYPE_CHOICES = ["bfloat16", "float32"]
 _QUANTIZATION_CHOICES = ["none", "fp4", "fp8", "int4", "int8"]
 _QUANTIZATION_TARGETS = ["LLM", "LLM+Diffusion", "LLM+Diffusion+VAE"]
 
