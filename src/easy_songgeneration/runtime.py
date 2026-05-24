@@ -147,7 +147,7 @@ def _resolve_runtime_file(relative_path: str, roots: list[Path]) -> str:
     raise FileNotFoundError(f"Required SongGeneration runtime file was not found: {relative_path}\nSearched:\n  - {searched_text}")
 
 
-def _register_resolvers(model_dir: Path):
+def _register_resolvers(model_dir: Path, runtime_roots: list[Path]):
     from omegaconf import OmegaConf
 
     def register(name: str, resolver) -> None:
@@ -156,10 +156,13 @@ def _register_resolvers(model_dir: Path):
         except TypeError:
             OmegaConf.register_new_resolver(name, resolver)
 
+    def load_yaml(path: str):
+        return list(OmegaConf.load(_resolve_runtime_file(str(path), [model_dir, *runtime_roots])))
+
     register("eval", lambda x: eval(x))
     register("concat", lambda *x: [xxx for xx in x for xxx in xx])
     register("get_fname", lambda: model_dir.name)
-    register("load_yaml", lambda x: list(OmegaConf.load(x)))
+    register("load_yaml", load_yaml)
     return OmegaConf
 
 

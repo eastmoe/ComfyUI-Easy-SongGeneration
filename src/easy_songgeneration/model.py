@@ -223,7 +223,7 @@ class SongGenerationModelHandle:
                 torch.cuda.set_device(int(self.gpu_id))
             progress.update(1, label="初始化 CUDA")
 
-            OmegaConf = _register_resolvers(self.model_dir)
+            OmegaConf = _register_resolvers(self.model_dir, self.runtime_roots)
             cfg_path = self.model_dir / "config.yaml"
             ckpt_path = self.model_dir / "model.pt"
             if not cfg_path.is_file() or not ckpt_path.is_file():
