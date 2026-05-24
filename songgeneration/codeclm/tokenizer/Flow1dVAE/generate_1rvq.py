@@ -2,8 +2,16 @@ import torch
 from model_1rvq import PromptCondAudioDiffusion
 import math
 import numpy as np
+import gc
 from tools.get_1dvae_large import get_model
 from safetensors.torch import load_file
+
+
+def _load_state_dict_assign(model, state_dict, *, strict=False):
+    try:
+        return model.load_state_dict(state_dict, strict=strict, assign=True)
+    except TypeError:
+        return model.load_state_dict(state_dict, strict=strict)
 
 class Tango:
     def __init__(self, \
@@ -32,14 +40,19 @@ class Tango:
             "unet_model_config_path":"configs/models/transformer2D_wocross_inch112_1x4_multi_large.json",
             "snr_gamma":None,
         }
-        self.model = PromptCondAudioDiffusion(**main_config).to(device)
+        self.model = PromptCondAudioDiffusion(**main_config)
         if model_path.endswith(".safetensors"):
             main_weights = load_file(model_path)
         else:
-            main_weights = torch.load(model_path, map_location=device)
-        self.model.load_state_dict(main_weights, strict=False)
+            main_weights = torch.load(model_path, map_location="cpu")
+        _load_state_dict_assign(self.model, main_weights, strict=False)
+        del main_weights
+        gc.collect()
+        self.model = self.model.to(device)
         print ("Successfully loaded checkpoint from:", model_path)
         
+        self.model.requires_grad_(False)
+        self.vae.requires_grad_(False)
         self.model.eval()
         self.model.init_device_dtype(torch.device(device), torch.float32)
         
@@ -185,54 +198,46 @@ class Tango:
                 codes = torch.cat([codes, codes], -1)
             codes = codes[:,:,0:len_codes]
         latent_length = min_samples
-        latent_list = []
+        output = None
+        prev_latent_tail = None
         spk_embeds = torch.zeros([1, 32, 1, 32], device=codes.device)
-        with torch.autocast(
-            device_type="cuda",
-            dtype=getattr(self, "diffusion_dtype", torch.float16),
-            enabled=getattr(self, "diffusion_dtype", torch.float16) in (torch.float16, torch.bfloat16),
-        ):
-            for sinx in range(0, codes.shape[-1]-hop_samples, hop_samples):
-                codes_input=[]
-                codes_input.append(codes[:,:,sinx:sinx+min_samples])
-                if(sinx == 0):
-                    # print("Processing {} to {}".format(sinx/self.sample_rate, (sinx + min_samples)/self.sample_rate))
-                    incontext_length = first_latent_length
-                    latents = self.model.inference_codes(codes_input, spk_embeds, first_latent, latent_length, incontext_length=incontext_length, additional_feats=[], guidance_scale=1.5, num_steps = num_steps, disable_progress=disable_progress, scenario='other_seg')
-                    latent_list.append(latents)
-                else:
-                    # print("Processing {} to {}".format(sinx/self.sample_rate, (sinx + min_samples)/self.sample_rate))
-                    true_latent = latent_list[-1][:,:,-ovlp_frames:].permute(0,2,1)
-                    print("true_latent.shape", true_latent.shape)
-                    len_add_to_1000 = min_samples - true_latent.shape[-2]
-                    # print("len_add_to_1000", len_add_to_1000)
-                    # exit()
-                    incontext_length = true_latent.shape[-2]
-                    true_latent = torch.cat([true_latent, torch.randn(true_latent.shape[0],  len_add_to_1000, true_latent.shape[-1]).to(self.device)], -2)
-                    latents = self.model.inference_codes(codes_input, spk_embeds, true_latent, latent_length, incontext_length=incontext_length,  additional_feats=[], guidance_scale=1.5, num_steps = num_steps, disable_progress=disable_progress, scenario='other_seg')
-                    latent_list.append(latents)
-
-        latent_list = [l.float() for l in latent_list]
-        latent_list[0] = latent_list[0][:,:,first_latent_length:]
-        min_samples =  int(min_samples * self.sample_rate // 1000 * 40)
-        hop_samples = int(hop_samples * self.sample_rate // 1000 * 40)
-        ovlp_samples = min_samples - hop_samples
-        with torch.no_grad():
-            output = None
-            for i in range(len(latent_list)):
-                latent = latent_list[i]
-                cur_output = self.vae.decode_audio(latent)[0].detach().cpu()
-
-                if output is None:
-                    output = cur_output
-                else:
-                    ov_win = torch.from_numpy(np.linspace(0, 1, ovlp_samples)[None, :])
-                    ov_win = torch.cat([ov_win, 1 - ov_win], -1)
-                    print("output.shape", output.shape)
-                    print("ov_win.shape", ov_win.shape)
-                    output[:, -ovlp_samples:] = output[:, -ovlp_samples:] * ov_win[:, -ovlp_samples:] + cur_output[:, 0:ovlp_samples] * ov_win[:, 0:ovlp_samples]
-                    output = torch.cat([output, cur_output[:, ovlp_samples:]], -1)
-            output = output[:, 0:target_len]
+        audio_min_samples = int(min_samples * self.sample_rate // 1000 * 40)
+        audio_hop_samples = int(hop_samples * self.sample_rate // 1000 * 40)
+        audio_ovlp_samples = audio_min_samples - audio_hop_samples
+        ov_win = None
+        if audio_ovlp_samples > 0:
+            ov_win = torch.from_numpy(np.linspace(0, 1, audio_ovlp_samples)[None, :])
+            ov_win = torch.cat([ov_win, 1 - ov_win], -1)
+        for sinx in range(0, codes.shape[-1]-hop_samples, hop_samples):
+            codes_input=[codes[:,:,sinx:sinx+min_samples]]
+            if(sinx == 0):
+                incontext_length = first_latent_length
+                context_latent = first_latent
+            else:
+                true_latent = prev_latent_tail.permute(0,2,1)
+                len_add_to_1000 = min_samples - true_latent.shape[-2]
+                incontext_length = true_latent.shape[-2]
+                context_latent = torch.cat([true_latent, torch.randn(true_latent.shape[0],  len_add_to_1000, true_latent.shape[-1]).to(self.device)], -2)
+            with torch.autocast(
+                device_type="cuda",
+                dtype=getattr(self, "diffusion_dtype", torch.float16),
+                enabled=getattr(self, "diffusion_dtype", torch.float16) in (torch.float16, torch.bfloat16),
+            ):
+                latents = self.model.inference_codes(codes_input, spk_embeds, context_latent, latent_length, incontext_length=incontext_length, additional_feats=[], guidance_scale=1.5, num_steps = num_steps, disable_progress=disable_progress, scenario='other_seg')
+            prev_latent_tail = latents[:, :, -ovlp_frames:].detach()
+            decode_latent = latents.float()
+            if sinx == 0:
+                decode_latent = decode_latent[:,:,first_latent_length:]
+            torch.cuda.empty_cache()
+            cur_output = self.vae.decode_audio(decode_latent)[0].detach().cpu()
+            if output is None:
+                output = cur_output
+            else:
+                output[:, -audio_ovlp_samples:] = output[:, -audio_ovlp_samples:] * ov_win[:, -audio_ovlp_samples:] + cur_output[:, 0:audio_ovlp_samples] * ov_win[:, 0:audio_ovlp_samples]
+                output = torch.cat([output, cur_output[:, audio_ovlp_samples:]], -1)
+            del latents, decode_latent, cur_output
+            torch.cuda.empty_cache()
+        output = output[:, 0:target_len]
         return output
 
     @torch.no_grad()

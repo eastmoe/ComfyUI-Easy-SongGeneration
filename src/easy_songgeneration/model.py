@@ -90,6 +90,92 @@ class SongGenerationModelHandle:
             return torch.device("cuda")
         return torch.device(f"cuda:{int(self.gpu_id)}")
 
+    def _cleanup_memory(self) -> None:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            try:
+                torch.cuda.ipc_collect()
+            except RuntimeError:
+                pass
+
+    def _move_lm(self, device: torch.device) -> None:
+        if self.model is None or getattr(self.model, "lm", None) is None:
+            return
+        try:
+            first_param = next(self.model.lm.parameters())
+            if first_param.device == device and (device.type != "cuda" or first_param.dtype == self.llm_dtype):
+                return
+        except StopIteration:
+            pass
+        dtype = self.llm_dtype if device.type == "cuda" else self.llm_dtype
+        if self.segmented_load:
+            _move_module_segmented(self.model.lm, device, dtype, f"移动 LLM 到 {device}")
+        else:
+            self.model.lm.to(device=device, dtype=dtype)
+        self.model.lm.requires_grad_(False)
+        self.model.lm.eval()
+        self._cleanup_memory()
+
+    def _move_tango_tokenizer(self, tokenizer: torch.nn.Module | None, device: torch.device, *, scope_prefix: str) -> None:
+        if tokenizer is None:
+            return
+        tango = getattr(tokenizer, "model", None)
+        if tango is None:
+            tokenizer.to(device=device)
+            tokenizer.eval()
+            self._cleanup_memory()
+            return
+
+        diffusion = getattr(tango, "model", None)
+        if isinstance(diffusion, torch.nn.Module):
+            try:
+                first_param = next(diffusion.parameters())
+                diffusion_ready = first_param.device == device and (device.type != "cuda" or first_param.dtype == self.diffusion_dtype)
+            except StopIteration:
+                diffusion_ready = False
+            if diffusion_ready:
+                pass
+            elif self.segmented_load:
+                _move_module_segmented(diffusion, device, self.diffusion_dtype, f"移动 {scope_prefix} Diffusion 到 {device}")
+            else:
+                diffusion.to(device=device, dtype=self.diffusion_dtype)
+            diffusion.requires_grad_(False)
+            diffusion.eval()
+            if hasattr(diffusion, "init_device_dtype"):
+                diffusion.init_device_dtype(device, self.diffusion_dtype)
+
+        vae = getattr(tango, "vae", None)
+        if isinstance(vae, torch.nn.Module):
+            if self.segmented_load:
+                try:
+                    first_param = next(vae.parameters())
+                    vae_ready = first_param.device == device and (device.type != "cuda" or first_param.dtype == self.vae_dtype)
+                except StopIteration:
+                    vae_ready = False
+                if not vae_ready:
+                    _move_module_segmented(vae, device, self.vae_dtype, f"移动 {scope_prefix} VAE 到 {device}")
+            else:
+                try:
+                    first_param = next(vae.parameters())
+                    vae_ready = first_param.device == device and (device.type != "cuda" or first_param.dtype == self.vae_dtype)
+                except StopIteration:
+                    vae_ready = False
+                if not vae_ready:
+                    vae.to(device=device, dtype=self.vae_dtype)
+            vae.requires_grad_(False)
+            vae.eval()
+
+        tango.device = str(device)
+        tango.diffusion_dtype = self.diffusion_dtype
+        tango.vae_dtype = self.vae_dtype
+        tokenizer.eval()
+        self._cleanup_memory()
+
+    def _move_separate_tokenizer(self, device: torch.device) -> None:
+        if self.model is not None:
+            self._move_tango_tokenizer(self.model.seperate_tokenizer, device, scope_prefix="separate-tokenizer")
+
     def _quantizes(self, name: str) -> bool:
         mode = _normalize_quantization_mode(self.quantization)
         if mode is None:
@@ -132,6 +218,8 @@ class SongGenerationModelHandle:
                 _move_module_segmented(diffusion, device, self.diffusion_dtype, f"移动 {scope_prefix} Diffusion 到 {device}")
             else:
                 diffusion.to(device=device, dtype=self.diffusion_dtype)
+            diffusion.requires_grad_(False)
+            diffusion.eval()
             if hasattr(diffusion, "init_device_dtype"):
                 diffusion.init_device_dtype(device, self.diffusion_dtype)
 
@@ -154,6 +242,8 @@ class SongGenerationModelHandle:
                 _move_module_segmented(vae, device, self.vae_dtype, f"移动 {scope_prefix} VAE 到 {device}")
             else:
                 vae.to(device=device, dtype=self.vae_dtype)
+            vae.requires_grad_(False)
+            vae.eval()
 
         tango.device = str(device)
         tango.diffusion_dtype = self.diffusion_dtype
@@ -183,6 +273,7 @@ class SongGenerationModelHandle:
                             raise
                         _load_state_dict_assign(audiolm, state_dict, strict=False)
                         self.quantization_info["llm"] = {"count": len(module_names), "status": f"loaded {cache_path.name}"}
+                        audiolm.requires_grad_(False)
                         return audiolm
                     print(f"[Easy-SongGeneration] Ignoring stale LLM quantization cache: {cache_path}", flush=True)
                 except Exception as exc:
@@ -207,6 +298,7 @@ class SongGenerationModelHandle:
                 rebuild_cache=self.rebuild_quantization_cache,
             )
             self.quantization_info["llm"] = {"count": count, "status": status}
+        audiolm.requires_grad_(False)
         return audiolm
 
     def _load(self) -> None:
@@ -277,6 +369,8 @@ class SongGenerationModelHandle:
                 max_duration=cfg.max_dur,
                 seperate_tokenizer=seperate_tokenizer,
             )
+            if self.segmented_load and seperate_tokenizer is not None:
+                self._move_separate_tokenizer(torch.device("cpu"))
             self._modules = {"sg_generate": sg_generate, "builders": builders}
             progress.finish("SongGeneration 模型加载完成")
         except Exception:
@@ -329,6 +423,8 @@ class SongGenerationModelHandle:
             tokenizer_builder = getattr(builders, "get_audio_tokenizer_model_cpu", builders.get_audio_tokenizer_model)
             audio_tokenizer = tokenizer_builder(self.cfg.audio_tokenizer_checkpoint, self.cfg)
             audio_tokenizer = self._configure_tango_tokenizer(audio_tokenizer, scope_prefix="prompt-tokenizer")
+            if self.model.seperate_tokenizer is not None:
+                self._move_separate_tokenizer(self._device())
             with torch.no_grad():
                 pmt_wav, vocal_wav, bgm_wav = separator.run(temp_path)
             raw_pmt_wav, raw_vocal_wav, raw_bgm_wav = pmt_wav, vocal_wav, bgm_wav
@@ -407,6 +503,9 @@ class SongGenerationModelHandle:
             )
             self.model.set_generation_params(**gen_params)
             conditioning = self._prepare_conditioning(options)
+            if self.segmented_load:
+                self._move_separate_tokenizer(torch.device("cpu"))
+                self._move_lm(self._device())
 
             if self.version == "v1":
                 descriptions = options.descriptions.lower() if options.descriptions else None
@@ -457,6 +556,9 @@ class SongGenerationModelHandle:
             try:
                 with progress_module.progress_hooks(progress_callback=_decode_progress, interrupt_callback=_check_interrupted):
                     with torch.no_grad():
+                        if self.segmented_load:
+                            self._move_lm(torch.device("cpu"))
+                            self._move_separate_tokenizer(self._device())
                         raw_args = ()
                         if "raw_pmt_wav" in conditioning and options.generate_type == "mixed":
                             raw_args = (
@@ -483,6 +585,8 @@ class SongGenerationModelHandle:
                 decode_success = True
             finally:
                 decode_progress.close(finish=decode_success)
+                if self.segmented_load:
+                    self._move_separate_tokenizer(torch.device("cpu"))
             end_time = time.time()
 
             metadata = {

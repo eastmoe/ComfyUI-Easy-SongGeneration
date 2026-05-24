@@ -174,12 +174,23 @@ def _normalize_quantization_mode(quantization: str) -> str | None:
 
 
 def _torch_load_weights(path: Path, map_location: str | torch.device = "cpu"):
+    kwargs: dict[str, Any] = {"map_location": map_location, "weights_only": True}
+    if str(map_location) == "cpu":
+        kwargs["mmap"] = True
     try:
-        return torch.load(str(path), map_location=map_location, weights_only=True)
+        return torch.load(str(path), **kwargs)
     except TypeError:
-        return torch.load(str(path), map_location=map_location)
+        kwargs.pop("mmap", None)
+        try:
+            return torch.load(str(path), **kwargs)
+        except TypeError:
+            kwargs.pop("weights_only", None)
+            return torch.load(str(path), **kwargs)
     except Exception as exc:
         message = str(exc)
+        if "mmap" in message:
+            kwargs.pop("mmap", None)
+            return torch.load(str(path), **kwargs)
         if "Weights only load failed" in message or "weights_only" in message:
             return torch.load(str(path), map_location=map_location)
         raise

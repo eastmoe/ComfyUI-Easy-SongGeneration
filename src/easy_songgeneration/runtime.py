@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import warnings
 import wave
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,11 @@ import torch
 import torchaudio
 
 from .config import SONGGEN_DIR, V1_MODEL_NAMES, _songgen_model_root
+
+def _configure_inference_warnings() -> None:
+    warnings.filterwarnings("ignore", category=FutureWarning, message=r".*torch\.cuda\.amp\.autocast.*")
+    warnings.filterwarnings("ignore", category=FutureWarning, message=r".*torch\.nn\.utils\.weight_norm.*")
+
 
 def _add_songgeneration_paths(runtime_roots: list[Path]) -> None:
     paths = [
@@ -33,6 +39,7 @@ def _add_songgeneration_paths(runtime_roots: list[Path]) -> None:
         if hub.exists():
             os.environ.setdefault("TRANSFORMERS_CACHE", str(hub))
             break
+    _configure_inference_warnings()
 
 
 def _model_choices() -> list[str]:

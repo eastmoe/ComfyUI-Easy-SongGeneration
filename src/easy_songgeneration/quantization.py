@@ -74,7 +74,18 @@ def _move_module_segmented(module: torch.nn.Module, device: torch.device, dtype:
         progress.update(1)
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-    module.to(device=device, dtype=dtype)
+
+    for name, param in list(module.named_parameters(recurse=False)):
+        if param is None:
+            continue
+        module._parameters[name] = torch.nn.Parameter(
+            param.detach().to(device=device, dtype=dtype),
+            requires_grad=param.requires_grad,
+        )
+    for name, buffer in list(module.named_buffers(recurse=False)):
+        if buffer is None:
+            continue
+        module._buffers[name] = buffer.detach().to(device=device, dtype=dtype)
     progress.update(1)
     return module
 
