@@ -4,6 +4,7 @@
     "EasySongGenerationDownloadModel": "Easy SongGeneration - 下载模型",
     "EasySongGenerationLoadModel": "Easy SongGeneration - 加载模型",
     "EasySongGenerationReleaseModel": "Easy SongGeneration - 释放模型",
+    "EasySongGenerationLyricsStyleFormatter": "Easy SongGeneration - 歌词与风格格式化",
     "EasySongGenerationGenerateMixed": "Easy SongGeneration - 生成完整歌曲",
     "EasySongGenerationGenerateVocal": "Easy SongGeneration - 生成人声",
     "EasySongGenerationGenerateBGM": "Easy SongGeneration - 生成伴奏",
@@ -13,6 +14,7 @@
     "EasySongGenerationDownloadModel": "从 eastmoe/SongGeneration 自动下载 common、third_party 和选中的模型目录到 ComfyUI/models/SongGeneration。",
     "EasySongGenerationLoadModel": "从 ComfyUI/models/SongGeneration 加载 SongGeneration 检查点，支持分段加载、精度选择和 Linear 权重量化缓存。",
     "EasySongGenerationReleaseModel": "释放已加载的 SongGeneration 模型并可清理 CUDA 显存缓存。",
+    "EasySongGenerationLyricsStyleFormatter": "格式化 SongGeneration 歌词结构与逗号分隔风格标签，并在前端提供常用标签插入按钮。",
     "EasySongGenerationGenerateMixed": "生成包含人声和伴奏的完整混音歌曲，输出 ComfyUI AUDIO。",
     "EasySongGenerationGenerateVocal": "生成人声轨，输出 ComfyUI AUDIO。",
     "EasySongGenerationGenerateBGM": "生成伴奏或纯音乐，输出 ComfyUI AUDIO。",
@@ -22,6 +24,7 @@
     "EasySongGenerationDownloadModel": ["状态"],
     "EasySongGenerationLoadModel": ["songgen_model", "信息"],
     "EasySongGenerationReleaseModel": ["状态"],
+    "EasySongGenerationLyricsStyleFormatter": ["歌词", "风格"],
     "EasySongGenerationGenerateMixed": ["音频", "元数据"],
     "EasySongGenerationGenerateVocal": ["音频", "元数据"],
     "EasySongGenerationGenerateBGM": ["音频", "元数据"],
@@ -186,6 +189,28 @@
       "clear_cuda_cache": {
         "display_name": "清理显存缓存",
         "tooltip": "释放后调用 torch.cuda.empty_cache。"
+      }
+    },
+    "formatter": {
+      "lyrics": {
+        "display_name": "歌词编辑器",
+        "tooltip": "支持 [intro-short]、[verse]、[chorus] 等 SongGeneration 结构标签；节点会输出格式化后的纯文本歌词。"
+      },
+      "style": {
+        "display_name": "风格标签",
+        "tooltip": "使用逗号分隔性别、曲风、情绪、乐器等标签；节点会输出格式化后的纯文本风格描述。"
+      },
+      "lyric_language": {
+        "display_name": "歌词语言",
+        "tooltip": "auto 会根据是否包含中文决定英文末句是否补句点。"
+      },
+      "wrap_untagged_as": {
+        "display_name": "无标签歌词包裹为",
+        "tooltip": "当歌词没有任何结构标签时，可自动包裹成 verse/chorus/bridge。"
+      },
+      "style_trailing_period": {
+        "display_name": "风格末尾句点",
+        "tooltip": "按官方示例在风格标签末尾保留英文句点。"
       }
     }
   }

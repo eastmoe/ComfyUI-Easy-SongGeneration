@@ -119,6 +119,7 @@ songgeneration/tools/new_auto_prompt.pt
 | `Easy SongGeneration - 下载模型` | 从 `eastmoe/SongGeneration` 自动下载 `common`、`third_party` 和选中的模型目录到 `ComfyUI/models/SongGeneration`。 |
 | `Easy SongGeneration - 加载模型` | 从 `ComfyUI/models/SongGeneration` 加载模型，输出 `songgen_model` 和模型信息 JSON。 |
 | `Easy SongGeneration - 释放模型` | 释放已加载模型，并可清理 CUDA/HIP 显存缓存。 |
+| `Easy SongGeneration - 歌词与风格格式化` | 编辑并格式化歌词结构与风格标签，输出两个纯文本接口：`歌词` 和 `风格`。 |
 | `Easy SongGeneration - 生成完整歌曲` | 生成包含人声和伴奏的混音歌曲，输出 `AUDIO` 和元数据。 |
 | `Easy SongGeneration - 生成人声` | 生成人声轨，输出 `AUDIO` 和元数据。 |
 | `Easy SongGeneration - 生成伴奏` | 生成伴奏或纯音乐，输出 `AUDIO` 和元数据。 |
@@ -154,6 +155,14 @@ songgeneration/tools/new_auto_prompt.pt
 [intro-short] ; [verse] Stars are waking in the rain. ; [chorus] We sing until the morning light. ; [outro-short]
 ```
 
+歌词与风格格式化节点可作为生成节点前置工具使用。它参考 SongGeneration 官方输入指南：歌词段落使用 `[intro-short]`、`[intro-medium]`、`[inst-short]`、`[inst-medium]`、`[outro-short]`、`[outro-medium]`、`[verse]`、`[chorus]`、`[bridge]` 等标签，段落之间输出为 ` ; ` 分隔；风格输出为逗号分隔标签，例如：
+
+```text
+female, pop ballad, resilient, piano, electric guitar, string section, drum kit.
+```
+
+在 ComfyUI 前端中，该节点会提供歌词结构标签、常见曲风、情绪、人声与乐器标签按钮，点击后会在当前光标处插入对应文本。
+
 ## 对原项目的改造
 
 - 初始化时引入上游 SongGeneration 代码。
@@ -174,6 +183,7 @@ songgeneration/tools/new_auto_prompt.pt
 - 新增 ComfyUI 节点实现，支持模型加载、模型释放、混音/人声/伴奏/分轨输出，并返回 ComfyUI 原生 `AUDIO`。
 - 新增模型自动下载节点，支持通过 `huggingface_hub` 从 `hf-mirror.com` 或 `huggingface.co` 多线程下载 `eastmoe/SongGeneration` 中的必需运行时目录和选中的模型目录，并可在证书链异常时关闭 SSL 验证。
 - 新增 Linear 权重量化、量化缓存、LLM/Diffusion/VAE 精度选择和分段加载，改善显存占用与加载体验。
+- 新增歌词与风格格式化节点，带前端插入按钮，并输出可直接连接生成节点的歌词与风格纯文本。
 - 新增 ComfyUI 右键菜单适配、中文节点翻译、加载与生成进度条，并支持 ComfyUI 中断回调。
 - 将节点入口与实现拆分：根目录保留 ComfyUI 入口，内部实现放入 `src/easy_songgeneration`，并把字符串、文档、依赖和模型目录职责分离。
 
@@ -187,6 +197,8 @@ ComfyUI-Easy-SongGeneration/
   README.md                           # 本说明文档
   docs/
     structure.md                      # 目录职责说明
+  web/
+    easy_songgeneration_formatter.js  # 歌词与风格格式化节点的前端插入按钮
   locales/
     zh-cn/
       nodes.json                      # ComfyUI 中文节点名称、提示和返回值翻译
@@ -196,6 +208,7 @@ ComfyUI-Easy-SongGeneration/
       __init__.py
       config.py                       # 节点常量、模型路径、量化/精度选项、翻译读取
       downloader.py                   # Hugging Face / hf-mirror 模型下载
+      formatter.py                    # 歌词结构与风格标签纯文本格式化
       model.py                        # 模型加载、缓存、推理调度、显存释放
       nodes.py                        # ComfyUI 节点定义
       options.py                      # 生成参数数据结构

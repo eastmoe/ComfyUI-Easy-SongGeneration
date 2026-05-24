@@ -18,6 +18,7 @@ from .config import (
     _ui_text,
 )
 from .downloader import DOWNLOAD_SOURCES, SONGGEN_DOWNLOAD_CHOICES, download_songgeneration_assets
+from .formatter import LANGUAGE_CHOICES, SECTION_CHOICES, format_lyrics_text, format_style_text
 from .model import _load_model
 from .options import GenerationOptions
 from .runtime import _model_choices, _to_comfy_audio
@@ -233,6 +234,66 @@ class SongGenerationReleaseModel:
         return (songgen_model.release(clear_cuda_cache=bool(clear_cuda_cache)),)
 
 
+class SongGenerationLyricsStyleFormatter:
+    CATEGORY = CATEGORY
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = _tr_names("return_names.EasySongGenerationLyricsStyleFormatter", ("lyrics", "style"))
+    FUNCTION = "format"
+    DESCRIPTION = _tr_text(
+        "descriptions.EasySongGenerationLyricsStyleFormatter",
+        "Format SongGeneration lyrics and comma-separated style tags, with UI shortcuts for section and style tags.",
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "lyrics": (
+                    "STRING",
+                    _ui_text(
+                        "ui.formatter.lyrics",
+                        "歌词编辑器",
+                        "支持 [intro-short]、[verse]、[chorus] 等 SongGeneration 结构标签；节点会输出格式化后的纯文本歌词。",
+                        multiline=True,
+                        default="[intro-medium]\n[verse] \n[chorus] \n[inst-medium]\n[verse] \n[chorus] \n[outro-medium]",
+                    ),
+                ),
+                "style": (
+                    "STRING",
+                    _ui_text(
+                        "ui.formatter.style",
+                        "风格标签",
+                        "使用逗号分隔性别、曲风、情绪、乐器等标签；节点会输出格式化后的纯文本风格描述。",
+                        multiline=True,
+                        default="female, pop, energetic, piano, drum kit",
+                    ),
+                ),
+                "lyric_language": (
+                    LANGUAGE_CHOICES,
+                    _ui_text("ui.formatter.lyric_language", "歌词语言", "auto 会根据是否包含中文决定英文末句是否补句点。"),
+                ),
+                "wrap_untagged_as": (
+                    SECTION_CHOICES,
+                    _ui_text(
+                        "ui.formatter.wrap_untagged_as",
+                        "无标签歌词包裹为",
+                        "当歌词没有任何结构标签时，可自动包裹成 verse/chorus/bridge。",
+                        default="verse",
+                    ),
+                ),
+                "style_trailing_period": (
+                    "BOOLEAN",
+                    _ui_text("ui.formatter.style_trailing_period", "风格末尾句点", "按官方示例在风格标签末尾保留英文句点。", default=True),
+                ),
+            }
+        }
+
+    def format(self, lyrics, style, lyric_language="auto", wrap_untagged_as="verse", style_trailing_period=True):
+        formatted_lyrics = format_lyrics_text(lyrics, lyric_language, wrap_untagged_as)
+        formatted_style = format_style_text(style, bool(style_trailing_period))
+        return (formatted_lyrics, formatted_style)
+
+
 class _GenerateOneBase:
     CATEGORY = CATEGORY
     RETURN_TYPES = ("AUDIO", "STRING")
@@ -327,6 +388,7 @@ NODE_CLASS_MAPPINGS = {
     "EasySongGenerationDownloadModel": SongGenerationDownloadModel,
     "EasySongGenerationLoadModel": SongGenerationLoadModel,
     "EasySongGenerationReleaseModel": SongGenerationReleaseModel,
+    "EasySongGenerationLyricsStyleFormatter": SongGenerationLyricsStyleFormatter,
     "EasySongGenerationGenerateMixed": SongGenerationGenerateMixed,
     "EasySongGenerationGenerateVocal": SongGenerationGenerateVocal,
     "EasySongGenerationGenerateBGM": SongGenerationGenerateBGM,
@@ -337,6 +399,7 @@ NODE_DISPLAY_NAME_MAPPINGS = _tr_mapping("node_display_names", {
     "EasySongGenerationDownloadModel": "Easy SongGeneration - Download Model",
     "EasySongGenerationLoadModel": "Easy SongGeneration - Load Model",
     "EasySongGenerationReleaseModel": "Easy SongGeneration - Release Model",
+    "EasySongGenerationLyricsStyleFormatter": "Easy SongGeneration - Lyrics & Style Formatter",
     "EasySongGenerationGenerateMixed": "Easy SongGeneration - Generate Mixed",
     "EasySongGenerationGenerateVocal": "Easy SongGeneration - Generate Vocal",
     "EasySongGenerationGenerateBGM": "Easy SongGeneration - Generate BGM",
