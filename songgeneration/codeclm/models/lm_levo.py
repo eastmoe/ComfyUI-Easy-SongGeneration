@@ -240,7 +240,6 @@ class LmModel(StreamingModule):
                     if descriptions is not None:
                         attr["text"]["type_info"] = descriptions[i]
                 conditions.append(attr)
-                print("conditions", conditions)
             if prepare_null_condition:
                 cfg_inference = ClassifierFreeGuidanceDropoutInference() 
                 null_conditions = cfg_inference(conditions, condition_types=["audio", "text"], 

@@ -26,10 +26,11 @@ def _check_interrupted() -> None:
 
 
 class _SongGenProgress:
-    def __init__(self, total: int, label: str, *, use_tqdm: bool = True) -> None:
+    def __init__(self, total: int, label: str, *, use_tqdm: bool = True, log_to_console: bool = True) -> None:
         self.total = max(1, int(total))
         self.current = 0
         self.label = label
+        self.log_to_console = log_to_console
         self.started = time.monotonic()
         self.last_log = self.started
         self.pbar = ComfyProgressBar(self.total) if ComfyProgressBar is not None else None
@@ -44,7 +45,7 @@ class _SongGenProgress:
             if use_tqdm and _tqdm is not None
             else None
         )
-        if self.tqdm is None:
+        if self.tqdm is None and self.log_to_console:
             print(f"[Easy-SongGeneration] {label}...", flush=True)
         self._send()
 
@@ -75,7 +76,7 @@ class _SongGenProgress:
                 self.tqdm.n = self.current
                 self.tqdm.refresh()
         now = time.monotonic()
-        if self.tqdm is None and (now - self.last_log >= 5.0 or self.current >= self.total):
+        if self.tqdm is None and self.log_to_console and (now - self.last_log >= 5.0 or self.current >= self.total):
             self.last_log = now
             print(f"[Easy-SongGeneration] {self.label}: {self.current}/{self.total}", flush=True)
 
@@ -91,7 +92,7 @@ class _SongGenProgress:
             self.tqdm.refresh()
             self.tqdm.close()
             self.tqdm = None
-        else:
+        elif self.log_to_console:
             print(f"[Easy-SongGeneration] {self.label}: {self.current}/{self.total}", flush=True)
 
     def close(self) -> None:
@@ -112,7 +113,7 @@ class _ProgressBridge:
         if self.progress is None or self.label != label or current < self.progress.current:
             self.close(finish=True)
             self.label = label
-            self.progress = _SongGenProgress(total, label, use_tqdm=False)
+            self.progress = _SongGenProgress(total, label, use_tqdm=False, log_to_console=False)
         self.progress.update_absolute(current, total=total, label=label)
 
     def close(self, *, finish: bool = False) -> None:

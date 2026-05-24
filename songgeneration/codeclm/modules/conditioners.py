@@ -644,7 +644,6 @@ class ClassifierFreeGuidanceDropoutInference(ClassifierFreeGuidanceDropout):
                 if condition in ['type_info'] and sample.text[condition] is not None:
                     if "[Musicality-very-high]" in sample.text[condition]:
                         sample.text[condition] = "[Musicality-very-low], ."
-                        print(f"cfg unconditioning: change sample.text[condition] to [Musicality-very-low]")
                     else:
                         sample.text[condition] = None
                 else:
