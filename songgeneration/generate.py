@@ -19,6 +19,37 @@ auto_prompt_type = ['Pop', 'Latin', 'Rock', 'Electronic', 'Metal', 'Country', 'R
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def _torch_load_weights(path, map_location="cpu"):
+    lfs_pointer = b"version https://git-lfs.github.com/spec/v1"
+    try:
+        with open(path, "rb") as handle:
+            if handle.read(len(lfs_pointer)) == lfs_pointer:
+                raise RuntimeError(
+                    f"{path} is a Git LFS pointer, not downloaded model weights. "
+                    "Install Git LFS and run `git lfs pull`, or use the model download workflow, then retry."
+                )
+    except FileNotFoundError:
+        pass
+
+    def _load(*, weights_only):
+        kwargs = {"map_location": map_location}
+        if weights_only is not None:
+            kwargs["weights_only"] = weights_only
+        return torch.load(path, **kwargs)
+
+    try:
+        return _load(weights_only=True)
+    except TypeError as exc:
+        if "weights_only" in str(exc):
+            return _load(weights_only=None)
+        raise
+    except Exception as exc:
+        message = str(exc)
+        if "Weights only load failed" in message or "weights_only" in message:
+            return _load(weights_only=False)
+        raise
+
+
 def get_arg(args, name, default=None):
     return getattr(args, name, default)
 
@@ -306,7 +337,7 @@ def generate(args, version = 'v1'):
     demucs_model_path = get_arg(args, "demucs_model_path") or os.path.join(SCRIPT_DIR, 'third_party', 'demucs', 'ckpt', 'htdemucs.pth')
     demucs_config_path = get_arg(args, "demucs_config_path") or os.path.join(SCRIPT_DIR, 'third_party', 'demucs', 'ckpt', 'htdemucs.yaml')
     separator = Separator(demucs_model_path, demucs_config_path, gpu_id=get_arg(args, "gpu_id", 0) or 0)
-    auto_prompt = torch.load(get_arg(args, "auto_prompt_path", os.path.join(SCRIPT_DIR, 'tools', 'new_auto_prompt.pt')))
+    auto_prompt = _torch_load_weights(get_arg(args, "auto_prompt_path", os.path.join(SCRIPT_DIR, 'tools', 'new_auto_prompt.pt')))
     audio_tokenizer = builders.get_audio_tokenizer_model(cfg.audio_tokenizer_checkpoint, cfg)
     audio_tokenizer = audio_tokenizer.eval().cuda()
     with open(input_jsonl, "r") as fp:
@@ -396,7 +427,7 @@ def generate(args, version = 'v1'):
 
     torch.cuda.empty_cache()
     audiolm = builders.get_lm_model(cfg, version=version)
-    checkpoint = torch.load(ckpt_path, map_location='cpu')
+    checkpoint = _torch_load_weights(ckpt_path, map_location='cpu')
     audiolm_state_dict = {k.replace('audiolm.', ''): v for k, v in checkpoint.items() if k.startswith('audiolm')}
     audiolm.load_state_dict(audiolm_state_dict, strict=False)
     audiolm = audiolm.eval()
@@ -519,7 +550,7 @@ def generate_lowmem(args, version = 'v1'):
         separator = Separator(demucs_model_path, demucs_config_path, gpu_id=get_arg(args, "gpu_id", 0) or 0)
         audio_tokenizer = builders.get_audio_tokenizer_model(cfg.audio_tokenizer_checkpoint, cfg)
         audio_tokenizer = audio_tokenizer.eval().cuda()
-    auto_prompt = torch.load(get_arg(args, "auto_prompt_path", os.path.join(SCRIPT_DIR, 'tools', 'new_auto_prompt.pt')))
+    auto_prompt = _torch_load_weights(get_arg(args, "auto_prompt_path", os.path.join(SCRIPT_DIR, 'tools', 'new_auto_prompt.pt')))
     new_items = []
     for line in lines:
         item = json.loads(line)
@@ -606,7 +637,7 @@ def generate_lowmem(args, version = 'v1'):
 
     # Define model or load pretrained model
     audiolm = builders.get_lm_model(cfg, version=version)
-    checkpoint = torch.load(ckpt_path, map_location='cpu')
+    checkpoint = _torch_load_weights(ckpt_path, map_location='cpu')
     audiolm_state_dict = {k.replace('audiolm.', ''): v for k, v in checkpoint.items() if k.startswith('audiolm')}
     audiolm.load_state_dict(audiolm_state_dict, strict=False)
     audiolm = audiolm.eval()
@@ -799,4 +830,3 @@ if __name__ == "__main__":
     else:
         print("CUDA is not available")
         exit()
-

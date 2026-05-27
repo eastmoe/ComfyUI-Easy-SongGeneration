@@ -176,25 +176,67 @@ def _normalize_quantization_mode(quantization: str) -> str | None:
 
 
 def _torch_load_weights(path: Path, map_location: str | torch.device = "cpu"):
-    kwargs: dict[str, Any] = {"map_location": map_location, "weights_only": True}
-    if str(map_location) == "cpu":
-        kwargs["mmap"] = True
+    load_path = str(path)
+    use_mmap = str(map_location) == "cpu"
+    lfs_pointer = b"version https://git-lfs.github.com/spec/v1"
     try:
-        return torch.load(str(path), **kwargs)
-    except TypeError:
-        kwargs.pop("mmap", None)
-        try:
-            return torch.load(str(path), **kwargs)
-        except TypeError:
-            kwargs.pop("weights_only", None)
-            return torch.load(str(path), **kwargs)
-    except Exception as exc:
+        with open(load_path, "rb") as handle:
+            if handle.read(len(lfs_pointer)) == lfs_pointer:
+                raise RuntimeError(
+                    f"{load_path} is a Git LFS pointer, not downloaded model weights. "
+                    "Install Git LFS and run `git lfs pull`, or use the model download workflow, then retry."
+                )
+    except FileNotFoundError:
+        pass
+
+    def _load(*, weights_only: bool | None, mmap: bool):
+        kwargs: dict[str, Any] = {"map_location": map_location}
+        if weights_only is not None:
+            kwargs["weights_only"] = weights_only
+        if mmap:
+            kwargs["mmap"] = True
+        return torch.load(load_path, **kwargs)
+
+    def _is_weights_only_error(exc: Exception) -> bool:
         message = str(exc)
-        if "mmap" in message:
-            kwargs.pop("mmap", None)
-            return torch.load(str(path), **kwargs)
-        if "Weights only load failed" in message or "weights_only" in message:
-            return torch.load(str(path), map_location=map_location)
+        return "Weights only load failed" in message or "weights_only" in message
+
+    def _load_unsafe_pickle(*, mmap: bool):
+        try:
+            return _load(weights_only=False, mmap=mmap)
+        except TypeError as exc:
+            message = str(exc)
+            if mmap and "mmap" in message:
+                return _load(weights_only=False, mmap=False)
+            if "weights_only" in message:
+                return _load(weights_only=None, mmap=False)
+            raise
+
+    try:
+        return _load(weights_only=True, mmap=use_mmap)
+    except TypeError as exc:
+        message = str(exc)
+        if use_mmap and "mmap" in message:
+            try:
+                return _load(weights_only=True, mmap=False)
+            except Exception as retry_exc:
+                if _is_weights_only_error(retry_exc):
+                    return _load_unsafe_pickle(mmap=False)
+                raise
+        if "weights_only" in message:
+            return _load(weights_only=None, mmap=False)
+        raise
+    except Exception as exc:
+        if _is_weights_only_error(exc):
+            return _load_unsafe_pickle(mmap=use_mmap)
+        message = str(exc)
+        if use_mmap and "mmap" in message:
+            try:
+                return _load(weights_only=True, mmap=False)
+            except Exception as retry_exc:
+                if _is_weights_only_error(retry_exc):
+                    return _load_unsafe_pickle(mmap=False)
+                raise
         raise
 
 
@@ -229,5 +271,3 @@ def _quantization_cache_path(scope: str, signature: dict[str, Any], mode: str) -
     safe_scope = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in scope)
     filename = f"{safe_scope}-{mode}-{_signature_digest(metadata)}.pt"
     return _songgen_cache_root() / filename, metadata
-
-

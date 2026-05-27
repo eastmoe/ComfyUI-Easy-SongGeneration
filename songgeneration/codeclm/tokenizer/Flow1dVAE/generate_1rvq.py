@@ -3,7 +3,7 @@ from model_1rvq import PromptCondAudioDiffusion
 import math
 import numpy as np
 import gc
-from tools.get_1dvae_large import get_model
+from tools.get_1dvae_large import _load_weights, get_model
 from safetensors.torch import load_file
 
 
@@ -56,7 +56,7 @@ class Tango:
         if model_path.endswith(".safetensors"):
             main_weights = load_file(model_path)
         else:
-            main_weights = torch.load(model_path, map_location="cpu")
+            main_weights = _load_weights(model_path)
         _load_state_dict_assign(self.model, main_weights, strict=False)
         del main_weights
         gc.collect()
