@@ -11,10 +11,12 @@ import numpy as np
 import torch
 
 from .config import (
+    SONGGEN_DIR,
     _MODEL_CACHE,
     _MODEL_CACHE_OWNERS,
     _RUNTIME_LOCK,
     _dtype_from_choice,
+    _is_git_lfs_pointer,
     _normalize_quantization_mode,
     _path_signature,
     _quantization_cache_path,
@@ -42,6 +44,49 @@ from .runtime import (
     _runtime_roots,
     _write_temp_wav,
 )
+
+
+AUTO_PROMPT_RUNTIME_FILES = ("tools/new_auto_prompt.pt", "tools/new_prompt.pt")
+
+
+def _auto_prompt_candidates(runtime_roots: list[Path]):
+    seen = set()
+    for relative_path in AUTO_PROMPT_RUNTIME_FILES:
+        for root in [*runtime_roots, SONGGEN_DIR]:
+            candidate = root / relative_path
+            try:
+                key = str(candidate.resolve())
+            except OSError:
+                key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            yield relative_path, candidate
+
+
+def _resolve_auto_prompt_path(runtime_roots: list[Path]) -> str:
+    pointer_paths = []
+    searched = []
+    for relative_path, path in _auto_prompt_candidates(runtime_roots):
+        searched.append(f"{relative_path}: {path}")
+        if not path.is_file():
+            continue
+        if _is_git_lfs_pointer(path):
+            pointer_paths.append(path)
+            continue
+        return str(path)
+
+    details = []
+    if pointer_paths:
+        details.append("Git LFS pointer files:\n  - " + "\n  - ".join(str(path) for path in pointer_paths))
+    details.append("Searched:\n  - " + "\n  - ".join(searched))
+    detail_text = "\n".join(details)
+    raise RuntimeError(
+        "SongGeneration auto prompt weights were not found or are still Git LFS pointer files. "
+        "Run the Easy SongGeneration download model node, then retry."
+        + (f"\n{detail_text}" if detail_text else "")
+    )
+
 
 class SongGenerationModelHandle:
     def __init__(
@@ -402,7 +447,7 @@ class SongGenerationModelHandle:
             self.sample_rate = int(getattr(cfg, "sample_rate", 48000))
             progress.update(1, label="读取模型配置")
 
-            auto_prompt_path = _resolve_runtime_file("tools/new_auto_prompt.pt", self.runtime_roots)
+            auto_prompt_path = _resolve_auto_prompt_path(self.runtime_roots)
             self.auto_prompt = _torch_load_weights(Path(auto_prompt_path), map_location="cpu")
             progress.update(1, label="加载自动参考音频提示")
 
@@ -752,5 +797,3 @@ def _load_model(
     if owner_key:
         _MODEL_CACHE_OWNERS[owner_key] = key
     return handle
-
-

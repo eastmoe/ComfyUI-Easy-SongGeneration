@@ -173,7 +173,7 @@ class SongGenerationDownloadModel:
     OUTPUT_NODE = True
     DESCRIPTION = _tr_text(
         "descriptions.EasySongGenerationDownloadModel",
-        "Download SongGeneration runtime folders and selected model checkpoints to ComfyUI/models/SongGeneration.",
+        "Download SongGeneration runtime assets and selected model checkpoints to ComfyUI/models/SongGeneration.",
     )
 
     @classmethod
@@ -183,7 +183,7 @@ class SongGenerationDownloadModel:
                 "source": (DOWNLOAD_SOURCES, _ui_text("ui.download_model.source", "下载源", "可选 hf-mirror.com 或 huggingface.co。")),
                 "model": (
                     SONGGEN_DOWNLOAD_CHOICES,
-                    _ui_text("ui.download_model.model", "模型目录", "common 和 third_party 始终下载；这里选择额外下载的 SongGeneration 模型。"),
+                    _ui_text("ui.download_model.model", "模型目录", "common、third_party 和自动参考风格提示权重始终下载；这里选择额外下载的 SongGeneration 模型。"),
                 ),
                 "revision": ("STRING", _ui_text("ui.download_model.revision", "分支/版本", "Hugging Face revision，通常保持 main。", default="main")),
                 "overwrite_existing": ("BOOLEAN", _ui_text("ui.download_model.overwrite_existing", "覆盖已有文件", "关闭时会跳过大小一致的本地文件。", default=False)),

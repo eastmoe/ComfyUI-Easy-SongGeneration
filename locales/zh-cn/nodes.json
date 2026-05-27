@@ -11,7 +11,7 @@
     "EasySongGenerationGenerateSeparate": "Easy SongGeneration - 分轨生成"
   },
   "descriptions": {
-    "EasySongGenerationDownloadModel": "从 eastmoe/SongGeneration 自动下载 common、third_party 和选中的模型目录到 ComfyUI/models/SongGeneration。",
+    "EasySongGenerationDownloadModel": "自动下载 common、third_party、自动参考风格提示权重和选中的模型目录到 ComfyUI/models/SongGeneration。",
     "EasySongGenerationLoadModel": "从 ComfyUI/models/SongGeneration 加载 SongGeneration 检查点，支持分段加载、精度选择和 Linear 权重量化缓存。",
     "EasySongGenerationReleaseModel": "释放已加载的 SongGeneration 模型并可清理 CUDA 显存缓存。",
     "EasySongGenerationLyricsStyleFormatter": "格式化 SongGeneration 歌词结构与逗号分隔风格标签，并在前端提供常用标签插入按钮。",
@@ -108,7 +108,7 @@
       },
       "model": {
         "display_name": "模型目录",
-        "tooltip": "common 和 third_party 始终下载；这里选择额外下载的 SongGeneration 模型。"
+        "tooltip": "common、third_party 和自动参考风格提示权重始终下载；这里选择额外下载的 SongGeneration 模型。"
       },
       "revision": {
         "display_name": "分支/版本",

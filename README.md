@@ -35,7 +35,7 @@ git clone https://github.com/eastmoe/ComfyUI-Easy-SongGeneration.git
 ComfyUI/models/SongGeneration/
 ```
 
-可以直接在 ComfyUI 里使用 `Easy SongGeneration - 下载模型` 节点自动下载。节点会通过 `huggingface_hub.snapshot_download` 从 `eastmoe/SongGeneration` 下载到上面的目录，其中 `common` 和 `third_party` 会始终下载，`SongGeneration-*` 模型目录按节点里的 `模型目录` 选择下载。下载源可选 `hf-mirror.com` 或 `huggingface.co`，默认不会覆盖已校验一致的本地文件。
+可以直接在 ComfyUI 里使用 `Easy SongGeneration - 下载模型` 节点自动下载。节点会通过 `huggingface_hub.snapshot_download` 从 `eastmoe/SongGeneration` 下载到上面的目录，其中 `common`、`third_party` 和自动参考风格提示权重会始终下载，`SongGeneration-*` 模型目录按节点里的 `模型目录` 选择下载。下载源可选 `hf-mirror.com` 或 `huggingface.co`，默认不会覆盖已校验一致的本地文件。
 
 推荐结构：
 
@@ -89,7 +89,13 @@ ComfyUI/models/SongGeneration/third_party/demucs/ckpt/htdemucs.pth
 ComfyUI/models/SongGeneration/third_party/demucs/ckpt/htdemucs.yaml
 ```
 
-自动参考风格会默认使用插件内置的：
+自动参考风格会优先使用模型根目录中的：
+
+```text
+ComfyUI/models/SongGeneration/tools/new_auto_prompt.pt
+```
+
+找不到时会回退到插件内置的：
 
 ```text
 songgeneration/tools/new_auto_prompt.pt
@@ -102,7 +108,7 @@ songgeneration/tools/new_auto_prompt.pt
 添加 `Easy SongGeneration - 下载模型` 节点后运行即可。常用选项：
 
 - `下载源`：中国大陆网络通常可先选 `hf-mirror.com`，也可以切换为 `huggingface.co`。
-- `模型目录`：选择要下载的模型目录；`common` 与 `third_party` 始终会一起下载。可选 `SongGeneration-v2-large`、`SongGeneration-base-full`、`SongGeneration-base-new`、`runtime-only` 或 `all`。
+- `模型目录`：选择要下载的模型目录；`common`、`third_party` 与自动参考风格提示权重始终会一起下载。可选 `SongGeneration-v2-large`、`SongGeneration-base-full`、`SongGeneration-base-new`、`runtime-only` 或 `all`。
 - `分支/版本`：默认 `main`。
 - `覆盖已有文件`：关闭时会复用 huggingface_hub 缓存并跳过已校验一致的文件。
 - `下载线程`：传给 `huggingface_hub.snapshot_download(max_workers=...)` 的并发线程数，默认 8。
@@ -116,7 +122,7 @@ songgeneration/tools/new_auto_prompt.pt
 
 | 节点 | 作用 |
 | --- | --- |
-| `Easy SongGeneration - 下载模型` | 从 `eastmoe/SongGeneration` 自动下载 `common`、`third_party` 和选中的模型目录到 `ComfyUI/models/SongGeneration`。 |
+| `Easy SongGeneration - 下载模型` | 自动下载 `common`、`third_party`、自动参考风格提示权重和选中的模型目录到 `ComfyUI/models/SongGeneration`。 |
 | `Easy SongGeneration - 加载模型` | 从 `ComfyUI/models/SongGeneration` 加载模型，输出 `songgen_model` 和模型信息 JSON。 |
 | `Easy SongGeneration - 释放模型` | 释放已加载模型，并可清理 CUDA/HIP 显存缓存。 |
 | `Easy SongGeneration - 歌词与风格格式化` | 编辑并格式化歌词结构与风格标签，输出两个纯文本接口：`歌词` 和 `风格`。 |

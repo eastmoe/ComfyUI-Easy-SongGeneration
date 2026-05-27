@@ -49,6 +49,7 @@ _DTYPE_CHOICES = ["float16", "bfloat16", "float32"]
 _DIFFUSION_DTYPE_CHOICES = ["bfloat16", "float32"]
 _QUANTIZATION_CHOICES = ["none", "fp4", "fp8", "int4", "int8"]
 _QUANTIZATION_TARGETS = ["LLM", "LLM+Diffusion", "LLM+Diffusion+VAE"]
+GIT_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
 
 
 def _load_localization(locale: str) -> dict[str, Any]:
@@ -175,19 +176,22 @@ def _normalize_quantization_mode(quantization: str) -> str | None:
     raise ValueError(f"Unsupported quantization format: {quantization}")
 
 
+def _is_git_lfs_pointer(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            return handle.read(len(GIT_LFS_POINTER_PREFIX)) == GIT_LFS_POINTER_PREFIX
+    except FileNotFoundError:
+        return False
+
+
 def _torch_load_weights(path: Path, map_location: str | torch.device = "cpu"):
     load_path = str(path)
     use_mmap = str(map_location) == "cpu"
-    lfs_pointer = b"version https://git-lfs.github.com/spec/v1"
-    try:
-        with open(load_path, "rb") as handle:
-            if handle.read(len(lfs_pointer)) == lfs_pointer:
-                raise RuntimeError(
-                    f"{load_path} is a Git LFS pointer, not downloaded model weights. "
-                    "Install Git LFS and run `git lfs pull`, or use the model download workflow, then retry."
-                )
-    except FileNotFoundError:
-        pass
+    if _is_git_lfs_pointer(path):
+        raise RuntimeError(
+            f"{load_path} is a Git LFS pointer, not downloaded model weights. "
+            "Install Git LFS and run `git lfs pull`, or use the model download workflow, then retry."
+        )
 
     def _load(*, weights_only: bool | None, mmap: bool):
         kwargs: dict[str, Any] = {"map_location": map_location}
