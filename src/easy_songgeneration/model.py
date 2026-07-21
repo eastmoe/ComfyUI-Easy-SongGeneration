@@ -447,9 +447,20 @@ class SongGenerationModelHandle:
             self.sample_rate = int(getattr(cfg, "sample_rate", 48000))
             progress.update(1, label="读取模型配置")
 
-            auto_prompt_path = _resolve_auto_prompt_path(self.runtime_roots)
-            self.auto_prompt = _torch_load_weights(Path(auto_prompt_path), map_location="cpu")
-            progress.update(1, label="加载自动参考音频提示")
+            try:
+                auto_prompt_path = _resolve_auto_prompt_path(self.runtime_roots)
+            except (FileNotFoundError, RuntimeError) as exc:
+                # This asset is optional until an automatic style is selected.
+                # Keep model loading usable for text prompts and uploaded audio.
+                self.auto_prompt = None
+                auto_prompt_label = "跳过缺失的自动参考音频提示"
+                print(f"[Easy-SongGeneration] {exc}", flush=True)
+            else:
+                # A present but corrupt/incompatible file is still a real model
+                # loading error and must not be silently treated as missing.
+                self.auto_prompt = _torch_load_weights(Path(auto_prompt_path), map_location="cpu")
+                auto_prompt_label = "加载自动参考音频提示"
+            progress.update(1, label=auto_prompt_label)
 
             seperate_tokenizer = None
             if "audio_tokenizer_checkpoint_sep" in cfg.keys():
@@ -579,6 +590,13 @@ class SongGenerationModelHandle:
 
         auto_type = options.auto_prompt_audio_type
         if auto_type and auto_type != "None":
+            if self.auto_prompt is None:
+                raise RuntimeError(
+                    "Automatic style prompt weights are unavailable. Download "
+                    "tools/new_prompt.pt from the tencent/SongGeneration Hugging Face Space, "
+                    "save it as ComfyUI/models/SongGeneration/tools/new_auto_prompt.pt, "
+                    "or use auto_prompt_audio_type=None / upload reference audio."
+                )
             if not isinstance(self.auto_prompt, dict) or auto_type not in self.auto_prompt:
                 raise ValueError(f"Unsupported auto_prompt_audio_type: {auto_type}")
             sg_generate = self._modules["sg_generate"]

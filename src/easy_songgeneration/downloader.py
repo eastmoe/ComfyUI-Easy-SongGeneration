@@ -17,6 +17,7 @@ AUTO_PROMPT_REVISION = "main"
 AUTO_PROMPT_REMOTE_FILE = "tools/new_prompt.pt"
 AUTO_PROMPT_LOCAL_FILES = ("tools/new_auto_prompt.pt", "tools/new_prompt.pt")
 MIN_AUTO_PROMPT_BYTES = 1024
+AUTO_PROMPT_ETAG_TIMEOUT_SECONDS = 10
 DOWNLOAD_SOURCES = ["hf-mirror.com", "huggingface.co"]
 REQUIRED_DOWNLOAD_DIRS = ("common", "third_party")
 SONGGEN_DOWNLOAD_MODELS = (
@@ -200,14 +201,13 @@ def _ensure_auto_prompt_asset(
             }
         return {"status": "skipped", "path": os.fspath(canonical_path)}
 
-    endpoints = [endpoint]
-    if endpoint != "https://huggingface.co":
-        endpoints.append("https://huggingface.co")
-
     download_error = None
     downloaded_path = None
     downloaded_endpoint = None
-    for candidate_endpoint in endpoints:
+    # Honor the source selected by the user. In particular, hf-mirror may redirect
+    # Space files to huggingface.co; explicitly retrying the official endpoint after
+    # that makes an unavailable optional asset stall the whole node for minutes.
+    for candidate_endpoint in (endpoint,):
         try:
             downloaded_path = Path(
                 _hf_hub_download(
@@ -218,6 +218,7 @@ def _ensure_auto_prompt_asset(
                     local_dir=target_root,
                     endpoint=candidate_endpoint,
                     force_download=bool(overwrite_existing),
+                    etag_timeout=AUTO_PROMPT_ETAG_TIMEOUT_SECONDS,
                     user_agent="ComfyUI-Easy-SongGeneration",
                 )
             )
@@ -440,17 +441,36 @@ def download_songgeneration_assets(
                 force_download=bool(overwrite_existing),
                 user_agent="ComfyUI-Easy-SongGeneration",
             )
-            auto_prompt = _ensure_auto_prompt_asset(
-                target_root=target_root,
-                endpoint=endpoint,
-                overwrite_existing=bool(overwrite_existing),
-            )
+            try:
+                auto_prompt = _ensure_auto_prompt_asset(
+                    target_root=target_root,
+                    endpoint=endpoint,
+                    overwrite_existing=bool(overwrite_existing),
+                )
+            except Exception as exc:
+                # Auto-prompt weights are only needed for the optional automatic
+                # style selector. Text descriptions and uploaded prompt audio can
+                # use the downloaded model without them.
+                auto_prompt = {
+                    "status": "unavailable",
+                    "repository": AUTO_PROMPT_REPO_ID,
+                    "error": str(exc),
+                }
+                print(
+                    "[Easy-SongGeneration] Optional auto prompt weights could not be downloaded; "
+                    "text prompts and uploaded reference audio remain available. "
+                    f"Reason: {exc}",
+                    flush=True,
+                )
             progress.update_absolute(2, total=3, label="校验 SongGeneration 模型下载")
             if dry_run_files:
                 verification = _verify_downloaded_files(target_root, dry_run_files)
             else:
                 verification = _verify_selected_local_files(target_root, model_choice)
-            auto_prompt_verification = _verify_auto_prompt_asset(target_root)
+            if auto_prompt.get("status") != "unavailable":
+                auto_prompt_verification = _verify_auto_prompt_asset(target_root)
+            else:
+                auto_prompt_verification = {"status": "unavailable"}
         progress.finish("SongGeneration 模型下载完成")
     except Exception:
         progress.close()

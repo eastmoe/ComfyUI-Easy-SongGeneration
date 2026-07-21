@@ -108,13 +108,15 @@ songgeneration/tools/new_auto_prompt.pt
 添加 `Easy SongGeneration - 下载模型` 节点后运行即可。常用选项：
 
 - `下载源`：中国大陆网络通常可先选 `hf-mirror.com`，也可以切换为 `huggingface.co`。
-- `模型目录`：选择要下载的模型目录；`common`、`third_party` 与自动参考风格提示权重始终会一起下载。可选 `SongGeneration-v2-large`、`SongGeneration-base-full`、`SongGeneration-base-new`、`runtime-only` 或 `all`。
+- `模型目录`：选择要下载的模型目录；`common`、`third_party` 会一起下载，并尝试下载自动参考风格提示权重。可选 `SongGeneration-v2-large`、`SongGeneration-base-full`、`SongGeneration-base-new`、`runtime-only` 或 `all`。
 - `分支/版本`：默认 `main`。
 - `覆盖已有文件`：关闭时会复用 huggingface_hub 缓存并跳过已校验一致的文件。
 - `下载线程`：传给 `huggingface_hub.snapshot_download(max_workers=...)` 的并发线程数，默认 8。
 - `关闭 SSL 验证`：仅在证书链异常或代理拦截 HTTPS 时开启；开启后会临时让 huggingface_hub 跳过 HTTPS 证书验证。
 
 下载完成后，在 `加载模型` 节点里刷新/重新打开模型下拉列表，即可选择刚下载的模型目录。
+
+自动参考风格提示权重位于 Hugging Face Space，某些镜像可能会把该文件重定向到无法访问的 `huggingface.co`。此可选文件下载失败不会再中止主模型下载；文本描述和上传参考音频仍可正常使用。需要 `Pop`、`Auto` 等自动风格时，可稍后重新运行下载节点，或手动将 Space 中的 `tools/new_prompt.pt` 放到 `ComfyUI/models/SongGeneration/tools/new_auto_prompt.pt`。
 
 ## 包含节点
 
