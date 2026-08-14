@@ -36,7 +36,7 @@ class CausalLM(LlamaForCausalLM_base):
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
@@ -101,6 +101,11 @@ class LmModel(LlamaModel_base):
         # Initialize weights and apply final processing
         self.post_init()
 
+    def set_static_cache_capacity(self, capacity: Optional[int]) -> None:
+        """Enable a fixed-size inference cache on every decoder layer."""
+        for layer in self.layers:
+            layer.self_attn.set_static_cache_capacity(capacity)
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -119,7 +124,7 @@ class LmModel(LlamaModel_base):
         )
         use_cache = use_cache if use_cache is not None else self.config.use_cache
 
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         # retrieve input_ids and inputs_embeds
         if input_ids is not None and inputs_embeds is not None:
@@ -135,7 +140,11 @@ class LmModel(LlamaModel_base):
         past_key_values_length = 0
 
         if past_key_values is not None:
-            past_key_values_length = past_key_values[0][0].shape[2]
+            first_layer_cache = past_key_values[0]
+            if hasattr(first_layer_cache, "length"):
+                past_key_values_length = first_layer_cache.length
+            else:
+                past_key_values_length = first_layer_cache[0].shape[2]
             seq_length_with_past = seq_length_with_past + past_key_values_length
 
         if position_ids is None:

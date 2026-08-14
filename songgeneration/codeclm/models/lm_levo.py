@@ -398,6 +398,7 @@ class LmModel(StreamingModule):
         record_token_pool = None
         if record_tokens:
             record_token_pool = []
+            record_window = max(1, int(record_window))
             
         # 4) set up startoff patterns
         start_offset = 0
@@ -419,58 +420,71 @@ class LmModel(StreamingModule):
         is_end = torch.zeros((B, self.code_depth, 1)).bool().to(device)
         ignore_tokens = audio_qt_embs[0][0]
         ignore_tokens = ignore_tokens[ignore_tokens < 16384]
+        prefix_len = sum(
+            condition_tensors[name][0].shape[1]
+            for name in self.fuser.fuse2cond.get('prepend', [])
+        )
+        cache_capacity = gen_sequence.shape[-1] + prefix_len
+        self.transformer.model.set_static_cache_capacity(cache_capacity)
+        self.transformer2.model.set_static_cache_capacity(cache_capacity)
         # 5) auto-regressive sampling
-        with self.streaming():
-            gen_sequence_len = gen_sequence.shape[-1]  # gen_sequence shape is [B, K, S]
-            prev_offset = 0
-            total_steps = max(1, gen_sequence_len - start_offset_sequence)
-            for step_index, offset in enumerate(
-                tqdm(
-                    range(start_offset_sequence, gen_sequence_len),
-                    desc="SongGeneration LLM",
-                    unit="token",
-                    dynamic_ncols=True,
-                ),
-                start=1,
-            ):
-                check_interrupted()
-                # get current sequence (note that the streaming API is providing the caching over previous offsets)
-                curr_sequence = gen_sequence[..., prev_offset:offset]
-                curr_mask = mask[None, ..., prev_offset:offset].expand(B, -1, -1)
-                if check:
-                    # check coherence between mask and sequence
-                    assert (curr_sequence == torch.where(curr_mask, curr_sequence, self.special_token_id)).all()
-                    # should never happen as gen_sequence is filled progressively
-                    assert not (curr_sequence == unknown_token).any()
-                # sample next token from the model, next token shape is [B, K, 1]
-                next_token = self._sample_next_token(
-                    curr_sequence, condition_tensors, use_sampling, temp, top_k, top_p,
-                    cfg_coef=cfg_coef, 
-                    sampled_token_pool=record_token_pool[-record_window:] if record_tokens else None,
-                    ignore_tokens = ignore_tokens
+        try:
+            with self.streaming():
+                gen_sequence_len = gen_sequence.shape[-1]  # gen_sequence shape is [B, K, S]
+                prev_offset = 0
+                total_steps = max(1, gen_sequence_len - start_offset_sequence)
+                for step_index, offset in enumerate(
+                    tqdm(
+                        range(start_offset_sequence, gen_sequence_len),
+                        desc="SongGeneration LLM",
+                        unit="token",
+                        dynamic_ncols=True,
+                    ),
+                    start=1,
+                ):
+                    check_interrupted()
+                    # get current sequence (note that the streaming API is providing the caching over previous offsets)
+                    curr_sequence = gen_sequence[..., prev_offset:offset]
+                    curr_mask = mask[None, ..., prev_offset:offset].expand(B, -1, -1)
+                    if check:
+                        # check coherence between mask and sequence
+                        assert (curr_sequence == torch.where(curr_mask, curr_sequence, self.special_token_id)).all()
+                        # should never happen as gen_sequence is filled progressively
+                        assert not (curr_sequence == unknown_token).any()
+                    # sample next token from the model, next token shape is [B, K, 1]
+                    next_token = self._sample_next_token(
+                        curr_sequence, condition_tensors, use_sampling, temp, top_k, top_p,
+                        cfg_coef=cfg_coef,
+                        sampled_token_pool=record_token_pool[-record_window:] if record_tokens else None,
+                        ignore_tokens=ignore_tokens,
                     )
-                # ensure the tokens that should be masked are properly set to special_token_id
-                # as the model never output special_token_id
-                valid_mask = mask[..., offset:offset+1].expand(B, -1, -1)
-                next_token[~valid_mask] = self.special_token_id
-                # 检查eos id
-                next_token[is_end] = self.special_token_id
-                is_end = is_end | (next_token == self.eos_token_id)
-                # ensure we don't overwrite prompt tokens, we only write over unknown tokens
-                # (then mask tokens should be left as is as well, which is correct)
-                gen_sequence[..., offset:offset+1] = torch.where(
-                    gen_sequence[..., offset:offset+1] == unknown_token,
-                    next_token, gen_sequence[..., offset:offset+1])
-                
-                # record sampled tokens in a window
-                if record_tokens:
-                    record_token_pool.append(next_token.squeeze())
-                if callback is not None:
-                    callback(step_index, total_steps)
-                if torch.all(is_end):
-                    gen_sequence = gen_sequence[..., :offset+1]
-                    break
-                prev_offset = offset
+                    # ensure the tokens that should be masked are properly set to special_token_id
+                    # as the model never output special_token_id
+                    valid_mask = mask[..., offset:offset+1].expand(B, -1, -1)
+                    next_token[~valid_mask] = self.special_token_id
+                    # 检查eos id
+                    next_token[is_end] = self.special_token_id
+                    is_end = is_end | (next_token == self.eos_token_id)
+                    # ensure we don't overwrite prompt tokens, we only write over unknown tokens
+                    # (then mask tokens should be left as is as well, which is correct)
+                    gen_sequence[..., offset:offset+1] = torch.where(
+                        gen_sequence[..., offset:offset+1] == unknown_token,
+                        next_token, gen_sequence[..., offset:offset+1])
+
+                    # record sampled tokens in a window
+                    if record_tokens:
+                        record_token_pool.append(next_token.squeeze())
+                        if len(record_token_pool) > record_window:
+                            del record_token_pool[:-record_window]
+                    if callback is not None:
+                        callback(step_index, total_steps)
+                    if torch.all(is_end):
+                        gen_sequence = gen_sequence[..., :offset+1]
+                        break
+                    prev_offset = offset
+        finally:
+            self.transformer.model.set_static_cache_capacity(None)
+            self.transformer2.model.set_static_cache_capacity(None)
                 
         # ensure sequence has been entirely filled
         assert not (gen_sequence == unknown_token).any()

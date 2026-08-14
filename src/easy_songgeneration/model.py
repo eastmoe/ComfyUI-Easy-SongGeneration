@@ -682,6 +682,9 @@ class SongGenerationModelHandle:
             finally:
                 self.model.set_custom_progress_callback(None)
                 lm_progress.close(finish=lm_success)
+                # The generation context has released its static KV cache; return
+                # those blocks to CUDA before diffusion starts.
+                self._cleanup_memory()
             mid_time = time.time()
 
             decode_success = False

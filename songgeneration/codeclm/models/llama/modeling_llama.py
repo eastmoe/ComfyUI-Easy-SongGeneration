@@ -63,6 +63,79 @@ logger = logging.get_logger(__name__)
 _CONFIG_FOR_DOC = "LlamaConfig"
 
 
+class StaticKVCache:
+    """Fixed-capacity KV cache used by token-by-token inference.
+
+    Growing a cache with ``torch.cat`` on every token leaves thousands of
+    differently-sized CUDA allocations behind in the caching allocator.  The
+    active cache is not especially large, but the reserved memory can become
+    enormous during long song generation.  This cache allocates once per
+    attention layer and appends in place instead.
+    """
+
+    def __init__(self, key_states: torch.Tensor, value_states: torch.Tensor, capacity: int):
+        initial_length = key_states.shape[-2]
+        if capacity < initial_length:
+            raise ValueError(
+                f"Static KV cache capacity ({capacity}) is smaller than its initial length ({initial_length})."
+            )
+        cache_shape = (*key_states.shape[:-2], capacity, key_states.shape[-1])
+        self.key = torch.empty(cache_shape, dtype=key_states.dtype, device=key_states.device)
+        self.value = torch.empty(cache_shape, dtype=value_states.dtype, device=value_states.device)
+        self.length = 0
+        self.append(key_states, value_states)
+
+    def append(self, key_states: torch.Tensor, value_states: torch.Tensor) -> None:
+        append_length = key_states.shape[-2]
+        end = self.length + append_length
+        if end > self.key.shape[-2]:
+            raise RuntimeError(
+                f"Static KV cache capacity exceeded: required {end}, capacity {self.key.shape[-2]}."
+            )
+        self.key[..., self.length:end, :].copy_(key_states)
+        self.value[..., self.length:end, :].copy_(value_states)
+        self.length = end
+
+    def active(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.key[..., :self.length, :], self.value[..., :self.length, :]
+
+    def __getitem__(self, index: int) -> torch.Tensor:
+        # Preserve the tuple-like interface expected by the surrounding legacy
+        # Llama implementation while exposing only initialized cache entries.
+        return self.active()[index]
+
+
+def _past_key_value_length(past_key_value) -> int:
+    if isinstance(past_key_value, StaticKVCache):
+        return past_key_value.length
+    return past_key_value[0].shape[-2]
+
+
+def _append_to_kv_cache(
+    past_key_value,
+    key_states: torch.Tensor,
+    value_states: torch.Tensor,
+    *,
+    use_cache: bool,
+    static_capacity: Optional[int],
+):
+    if isinstance(past_key_value, StaticKVCache):
+        past_key_value.append(key_states, value_states)
+        key_states, value_states = past_key_value.active()
+        return key_states, value_states, past_key_value if use_cache else None
+
+    if past_key_value is not None:
+        key_states = torch.cat([past_key_value[0], key_states], dim=2)
+        value_states = torch.cat([past_key_value[1], value_states], dim=2)
+
+    if use_cache and static_capacity is not None:
+        cache = StaticKVCache(key_states, value_states, static_capacity)
+        key_states, value_states = cache.active()
+        return key_states, value_states, cache
+
+    return key_states, value_states, (key_states, value_states) if use_cache else None
+
+
 def _get_unpad_data(padding_mask):
     seqlens_in_batch = padding_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(padding_mask.flatten(), as_tuple=False).flatten()
@@ -286,6 +359,7 @@ class LlamaAttention(nn.Module):
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
         self.rope_theta = config.rope_theta
+        self._static_cache_capacity: Optional[int] = None
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
@@ -329,6 +403,9 @@ class LlamaAttention(nn.Module):
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
+    def set_static_cache_capacity(self, capacity: Optional[int]) -> None:
+        self._static_cache_capacity = capacity
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -369,16 +446,17 @@ class LlamaAttention(nn.Module):
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            kv_seq_len += past_key_value[0].shape[-2]
+            kv_seq_len += _past_key_value_length(past_key_value)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
-        if past_key_value is not None:
-            # reuse k, v, self_attention
-            key_states = torch.cat([past_key_value[0], key_states], dim=2)
-            value_states = torch.cat([past_key_value[1], value_states], dim=2)
-
-        past_key_value = (key_states, value_states) if use_cache else None
+        key_states, value_states, past_key_value = _append_to_kv_cache(
+            past_key_value,
+            key_states,
+            value_states,
+            use_cache=use_cache,
+            static_capacity=self._static_cache_capacity,
+        )
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -460,18 +538,19 @@ class LlamaFlashAttention2(LlamaAttention):
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            kv_seq_len += past_key_value[0].shape[-2]
+            kv_seq_len += _past_key_value_length(past_key_value)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
-        if past_key_value is not None:
-            # reuse k, v, self_attention
-            key_states = torch.cat([past_key_value[0], key_states], dim=2)
-            value_states = torch.cat([past_key_value[1], value_states], dim=2)
-
-        past_key_value = (key_states, value_states) if use_cache else None
+        key_states, value_states, past_key_value = _append_to_kv_cache(
+            past_key_value,
+            key_states,
+            value_states,
+            use_cache=use_cache,
+            static_capacity=self._static_cache_capacity,
+        )
 
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)
@@ -856,7 +935,7 @@ class LlamaModel(LlamaPreTrainedModel):
         )
         use_cache = use_cache if use_cache is not None else self.config.use_cache
 
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         # retrieve input_ids and inputs_embeds
         if input_ids is not None and inputs_embeds is not None:
@@ -1045,7 +1124,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
@@ -1185,7 +1264,7 @@ class LlamaForSequenceClassification(LlamaPreTrainedModel):
             config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
             `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
         """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         transformer_outputs = self.model(
             input_ids,
